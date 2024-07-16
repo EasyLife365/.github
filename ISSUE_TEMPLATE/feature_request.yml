@@ -1,0 +1,59 @@
+name: New Feature Request
+description: Suggest an idea for EasyLife 365 Collaboration.
+title: "[VERB] <your issue subject here>"
+labels: ['feature-request']
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thank you for suggesting a new feature! Please fill out the details below to help us understand your idea better.
+  - type: textarea
+    id: feature_summary
+    attributes:
+      label: Feature Summary
+      description: Provide a clear and concise description of the feature or problem. For example, "As an end-user, I would like to be able to..."
+      placeholder: As a <type of user/customer>, I want <an action/business need>, so that <a benefit/a business value>
+    validations:
+      required: true
+  - type: textarea
+    id: detailed_description
+    attributes:
+      label: Detailed Description
+      description: Describe the solution you'd like to see. You may use bullet points to capture your ideas more clearly.
+    validations:
+      required: true
+  - type: textarea
+    id: acceptance_criteria
+    attributes:
+      label: Acceptance criteria
+      description: Add the acceptance criteria for this feature request.
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives_considered
+    attributes:
+      label: Alternatives Considered
+      description: Describe any alternative solutions or features you've considered.
+    validations:
+      required: false
+  - type: textarea
+    id: additional_context
+    attributes:
+      label: Additional Context
+      description: Add any other context or screenshots about the feature request here.
+    validations:
+      required: false
+  - type: checkboxes
+    id: documentation_changes
+    attributes:
+      label: Documentation Changes
+      description: Does this feature require updates to the documentation? 
+      options:
+        - label: Yes
+  - type: checkboxes
+    id: changelog_changes
+    attributes:
+      label: Changelog Changes
+      description: Should this feature be mentioned in the changelog?
+      options:
+        - label: Yes

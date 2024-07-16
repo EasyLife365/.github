@@ -1,0 +1,57 @@
+name: 🐞 Bug Report
+description: Report any functionality that is not working as expected.
+title: "Bug: <short description>"
+labels: ["bug", "unconfirmed"]
+projects: ["EasyLife365/12"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thank you for reporting the issue you are facing. Please fill out the details below to help us resolve it as quickly as possible.
+  - type: textarea
+    id: description
+    attributes:
+      label: Description
+      description: Provide a detailed description of the issue you are experiencing.
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to Reproduce
+      description: List the steps taken to reproduce the issue.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected Results
+      description: Describe what you expected to happen.
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual Results
+      description: Describe what actually happened.
+    validations:
+      required: true
+  - type: dropdown
+    id: environment
+    attributes:
+      label: Environment
+      description: Specify the environment(s) where this issue occurs.
+      options:
+        - Development
+        - Insiders
+        - Production
+      multiple: true
+    validations:
+      required: true
+  - type: textarea
+    id: info
+    attributes:
+      label: Additional Information
+      description: Provide any additional information that may help identify the root cause of this issue or references to documentation.
+    validations:
+      required: false
