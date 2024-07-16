@@ -1,7 +1,8 @@
-name: New Feature Request
-description: Suggest an idea for EasyLife 365 Collaboration.
+name: 🚀 New Feature Request
+description: Suggest an idea.
 title: "[VERB] <your issue subject here>"
-labels: ['feature-request']
+labels: ['enhancement']
+projects: ["EasyLife365/12"]
 body:
   - type: markdown
     attributes:
@@ -46,14 +47,16 @@ body:
   - type: checkboxes
     id: documentation_changes
     attributes:
-      label: Documentation Changes
+      label: Documentation
       description: Does this feature require updates to the documentation? 
       options:
-        - label: Yes
+        - label: Documentation changes required
+          required: false
   - type: checkboxes
     id: changelog_changes
     attributes:
       label: Changelog Changes
-      description: Should this feature be mentioned in the changelog?
+      description: Does this feature require updates to the documentation? 
       options:
-        - label: Yes
+        - label: Should this feature be mentioned in the changelog? 
+          required: false
