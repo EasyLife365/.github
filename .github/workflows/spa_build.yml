@@ -1,0 +1,56 @@
+name: SPA Build
+
+on:
+  workflow_call:
+    inputs:
+      app-location:
+        description: The project location of the app
+        required: true
+        type: string
+      app-target:
+        description: The project target of the app
+        required: true
+        type: string
+      app-artifact:
+        description: The project artifact of the app
+        required: true
+        type: string
+
+    secrets:
+      package-token: 
+        description: The nuget token to restore the packages
+        required: true
+
+env:
+  CI: false
+
+permissions:
+   id-token: write
+   contents: read
+
+jobs:
+  build:
+    runs-on: 'ubuntu-latest'
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - uses: bahmutov/npm-install@v1
+        with:
+          working-directory: ${{ inputs.app-location }}
+        env:
+          GITHUB_PACKAGE_TOKEN: ${{ secrets.package-token }}
+
+      - name: Build
+        run: "npm run build:${{ inputs.app-target }}"
+        working-directory: ${{ inputs.app-location }}
+
+      - name: Upload build app artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ inputs.app-artifact }}
+          path: "${{ inputs.app-location }}/dist"
+          include-hidden-files: true
+          retention-days: 15
