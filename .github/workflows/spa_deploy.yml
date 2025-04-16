@@ -1,0 +1,57 @@
+name: SPA Deploy
+
+on:
+  workflow_call:
+    inputs:
+      environment:
+        description: The Github Environment to run
+        required: true
+        type: string
+      app-artifact: 
+        description: The app artifact name
+        required: true
+        type: string
+      app-name: 
+        description: The app name of the static web app
+        required: true
+        type: string
+
+env:
+  CI: false
+
+permissions:
+   id-token: write
+   contents: read
+  
+jobs:
+  deploy:
+    runs-on: 'ubuntu-latest'
+    timeout-minutes: 15
+    environment: 
+      name: ${{ inputs.environment }}
+
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: ${{ inputs.app-artifact }}
+          path: ./app
+
+      - uses: azure/login@v1
+        with:
+          client-id: ${{ vars.AADAPPID }}
+          tenant-id: ${{ vars.TENANTID }}
+          subscription-id: ${{ vars.SUBSCRIPTIONID }}
+          
+      - uses: azure/CLI@v1
+        with:
+          inlineScript: |
+              SWA_DEPLOYMENT_TOKEN=$(az staticwebapp secrets list -n ${{ inputs.app-name }} --query 'properties.apiKey' -o tsv)
+              echo "::add-mask::$SWA_DEPLOYMENT_TOKEN"
+              echo SWA_DEPLOYMENT_TOKEN=$SWA_DEPLOYMENT_TOKEN >> $GITHUB_ENV   
+    
+      - uses: Azure/static-web-apps-deploy@v1
+        with:
+          azure_static_web_apps_api_token: ${{ env.SWA_DEPLOYMENT_TOKEN }}
+          action: "upload"
+          app_location: "./app/."
+          skip_app_build: "true"

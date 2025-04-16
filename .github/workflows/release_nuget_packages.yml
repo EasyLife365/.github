@@ -1,39 +1,46 @@
-name: Release Nuget Packages
+name: Nuget Release
 
 on:
   workflow_call:
     inputs:
-      dotnet_version:
+      dotnet-version:
         required: false
         type: string
         default: '9.x'
+      
+      use-azurite:
+        required: false
+        type: boolean
+        default: false
+
     secrets:
-      PACKAGE_TOKEN:
+      PACKAGE-TOKEN:
         required: true
 
 permissions:
   contents: read
   packages: write
+  checks: write
+  pull-requests: write
 
 jobs:
-  release:
+  release-with-tests:
     runs-on: ubuntu-latest
-
     steps:
       - name: Checkout
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
-        
+
       - name: Get version
         id: version
         uses: battila7/get-version-action@v2
-          
-      - name: Set up .NET
+
+      - name: Setup .NET
         uses: actions/setup-dotnet@v4
         with:
-          dotnet-version: ${{ inputs.dotnet_version }}
-          
+          dotnet-version: ${{ inputs.dotnet-version }}
+
       - name: Cache NuGet packages
         uses: actions/cache@v4
         with:
@@ -41,16 +48,31 @@ jobs:
           key: ${{ runner.os }}-nuget-${{ hashFiles('**/*.csproj') }}
           restore-keys: |
             ${{ runner.os }}-nuget-
-      
+
       - name: Restore
-        run: dotnet restore 
-      
+        run: dotnet restore
+        env:
+            GITHUB_PACKAGE_TOKEN: ${{ secrets.PACKAGE-TOKEN }}
+
+      - name: Setup Node.js environment
+        if: ${{ inputs.use-azurite }}
+        uses: actions/setup-node@v4
+    
+      - name: Install Azurite
+        if: ${{ inputs.use-azurite }}
+        run: npm install -g azurite
+    
+      - name: Run Azurite in Background
+        if: ${{ inputs.use-azurite }}
+        shell: bash
+        run: azurite &
+
       - name: Build
         run: dotnet build -c Release --no-restore -p:Version=${{ steps.version.outputs.version-without-v }}
 
       - name: Pack
-        run: dotnet pack -c Release --no-restore --output nupkgs -p:PackageVersion=${{ steps.version.outputs.version-without-v }} --include-symbols --include-source 
-      
+        run: dotnet pack -c Release --no-restore --output nupkgs -p:PackageVersion=${{ steps.version.outputs.version-without-v }} --include-symbols --include-source
+
       - name: Publish packages
         run: |
-          dotnet nuget push "nupkgs/*.nupkg" -k ${{ secrets.PACKAGE_TOKEN }} -s https://nuget.pkg.github.com/${{ github.repository_owner }}/index.json --skip-duplicate
+          dotnet nuget push "nupkgs/*.nupkg" -k ${{ secrets.PACKAGE-TOKEN }} -s https://nuget.pkg.github.com/${{ github.repository_owner }}/index.json --skip-duplicate
