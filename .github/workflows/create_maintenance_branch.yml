@@ -1,0 +1,82 @@
+name: Create Maintenance Branch
+
+on:
+  workflow_call:
+
+permissions:
+  contents: write
+  
+jobs:
+  create-maintenance-branch:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Ensure workflow is started from a tag
+        id: tag_check
+        run: |
+          echo "GITHUB_REF=${GITHUB_REF}"
+          if [[ "${GITHUB_REF}" != refs/tags/v* ]]; then
+            echo "❌ This workflow must be triggered from a tag. Current ref: ${GITHUB_REF}"
+            exit 1
+          fi
+          echo "✅ Workflow triggered from a valid tag."
+
+      - name: Extract tag and version components
+        id: new_version
+        run: |
+          TAG=${GITHUB_REF##*/}
+          MAJOR=$(echo "$TAG" | cut -d. -f1 | sed 's/v//')
+          MINOR=$(echo "$TAG" | cut -d. -f2)
+          PATCH=$(echo "$TAG" | cut -d. -f3)
+
+          echo "Extracted tag: $TAG"
+          echo "MAJOR=$MAJOR"
+          echo "MINOR=$MINOR"
+          echo "PATCH=$PATCH"
+
+          echo "tag=$TAG" >> $GITHUB_OUTPUT
+          echo "major=$MAJOR" >> $GITHUB_OUTPUT
+          echo "minor=$MINOR" >> $GITHUB_OUTPUT
+          echo "patch=$PATCH" >> $GITHUB_OUTPUT
+
+      - name: Determine branch name for maintenance
+        id: branch_info
+        run: |
+          NEW_TAG=${{ steps.new_version.outputs.tag }}
+          NEW_MAJOR=${{ steps.new_version.outputs.major }}
+          NEW_MINOR=${{ steps.new_version.outputs.minor }}
+
+          BRANCH_NAME="v$NEW_MAJOR.$NEW_MINOR.x"
+
+          echo "Creating maintenance branch: $BRANCH_NAME from tag: $NEW_TAG"
+          echo "branch_name=$BRANCH_NAME" >> $GITHUB_OUTPUT
+          echo "source_tag=$NEW_TAG" >> $GITHUB_OUTPUT
+
+      - name: Check if branch already exists
+        id: branch_check
+        run: |
+          git fetch origin
+          BRANCH_NAME=${{ steps.branch_info.outputs.branch_name }}
+      
+          echo "Checking if branch exists: $BRANCH_NAME"
+          if git ls-remote --heads origin "$BRANCH_NAME" | grep "$BRANCH_NAME"; then
+            echo "❌ Branch $BRANCH_NAME already exists."
+            exit 1  # This throws the exception by failing the step
+          else
+            echo "✅ Branch $BRANCH_NAME does not exist."
+          fi
+
+      - name: Create maintenance branch
+        if: ${{ steps.branch_info.outputs.branch_name != '' }}
+        run: |
+          BRANCH_NAME=${{ steps.branch_info.outputs.branch_name }}
+          SOURCE_TAG=${{ steps.branch_info.outputs.source_tag }}
+
+          echo "Creating branch $BRANCH_NAME from tag $SOURCE_TAG..."
+          git fetch origin tag "$SOURCE_TAG"
+          git checkout -b "$BRANCH_NAME" "$SOURCE_TAG"
+          git push origin "$BRANCH_NAME"
+          echo "✅ Branch $BRANCH_NAME created and pushed."
