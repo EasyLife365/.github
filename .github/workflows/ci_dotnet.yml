@@ -1,4 +1,4 @@
-name: CI Dotnet Template
+name: Dotnet tests
 
 on:
   workflow_call:
@@ -12,10 +12,19 @@ on:
       use-azurite:
         required: false
         type: boolean
-        default: true
+        default: false
+
+      add-function-core-tools:
+        required: false
+        type: boolean
+        default: false
+
+      project-name:
+        required: false
+        type: string
 
     secrets:
-      PACKAGE_TOKEN:
+      PACKAGE-TOKEN:
         required: true
 
 permissions:
@@ -34,7 +43,7 @@ jobs:
         uses: actions/setup-dotnet@v4
         with:
           dotnet-version: ${{ inputs.dotnet-version }}
-      
+
       - name: Cache NuGet packages
         uses: actions/cache@v4
         with:
@@ -44,15 +53,34 @@ jobs:
             ${{ runner.os }}-nuget-
 
       - name: Install dependencies
-        run: dotnet restore
+        run: |
+          if [ -z "${{ inputs.project-name }}" ]; then
+            echo "Restoring all projects..."
+            dotnet restore
+          else
+            echo "Restoring project: ${{ inputs.project-name }}"
+            dotnet restore "${{ inputs.project-name }}"
+          fi
         env:
-          GITHUB_PACKAGE_TOKEN: ${{ secrets.PACKAGE_TOKEN }}
+          GITHUB_PACKAGE_TOKEN: ${{ secrets.PACKAGE-TOKEN }}
 
       - name: Build
-        run: dotnet build --configuration Release --no-restore
+        run: |
+          if [ -z "${{ inputs.project-name }}" ]; then
+            echo "Building all projects..."
+            dotnet build --configuration Release --no-restore
+          else
+            echo "Building project: ${{ inputs.project-name }}"
+            dotnet build "${{ inputs.project-name }}" --configuration Release --no-restore
+          fi
 
       - name: Setup Node.js environment
+        if: ${{ inputs.use-azurite || inputs.add-function-core-tools }}
         uses: actions/setup-node@v4
+
+      - name: Install Azure Functions Core Tools
+        if: ${{ inputs.add-function-core-tools }}
+        run: npm install -g azure-functions-core-tools@4 --unsafe-perm true
 
       - name: Install Azurite
         if: ${{ inputs.use-azurite }}
@@ -64,7 +92,14 @@ jobs:
         run: azurite &
 
       - name: Test
-        run: dotnet test --no-restore --verbosity normal --logger trx --results-directory ./TestResults
+        run: |
+          if [ -z "${{ inputs.project-name }}" ]; then
+            echo "Testing all projects..."
+            dotnet test --no-restore --verbosity normal --logger trx --results-directory ./TestResults
+          else
+            echo "Testing project: ${{ inputs.project-name }}"
+            dotnet test "${{ inputs.project-name }}" --no-restore --verbosity normal --logger trx --results-directory ./TestResults
+          fi
 
       - name: Publish test results
         uses: EnricoMi/publish-unit-test-result-action@v2
