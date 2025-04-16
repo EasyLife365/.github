@@ -1,0 +1,74 @@
+name: React build
+
+on:
+  workflow_call:
+
+    inputs:
+      run-storybook:
+        required: false
+        type: boolean
+        default: false
+
+      publish:
+        required: false
+        type: boolean
+        default: false
+
+    secrets:
+      GITHUB_PACKAGE_TOKEN:
+        required: false
+
+permissions:
+  checks: write
+  contents: read
+  pull-requests: write
+
+jobs:
+  run-tests:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: bahmutov/npm-install@v1
+        env:
+          GITHUB_PACKAGE_TOKEN: ${{ secrets.GITHUB_PACKAGE_TOKEN }}
+
+      - run: npm ci
+
+      - run: npm run build --if-present
+
+      - name: Install Playwright
+        if: ${{ inputs.run-storybook }}
+        run: npx playwright install --with-deps
+
+      - name: Build Storybook
+        if: ${{ inputs.run-storybook }}
+        run: npm run storybook:export
+
+      - name: Serve Storybook and run tests
+        if: ${{ inputs.run-storybook }}
+        run: |
+          npx concurrently -k -s first -n "SB,TEST" -c "magenta,blue" \
+            "npx http-server storybook-static --port 6006 --silent" \
+            "npx wait-on tcp:127.0.0.1:6006 && npm run test-coverage"
+
+      - uses: dorny/test-reporter@v1
+        if: always()
+        with:
+          name: Test Details                 
+          path: junit.xml                     
+          reporter: jest-junit
+
+      - name: Configure .npmrc for GitHub Packages
+        if: ${{ inputs.publish }}
+        run: |
+          echo "@easylife365:registry=https://npm.pkg.github.com/" > ~/.npmrc
+          echo "//npm.pkg.github.com/:_authToken=${{ secrets.GITHUB_PACKAGE_TOKEN }}" >> ~/.npmrc
+          echo "registry=https://npm.pkg.github.com/" >> ~/.npmrc
+
+      - name: Publish packages
+        if: ${{ inputs.publish }}
+        run: npm publish
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_PACKAGE_TOKEN }}
