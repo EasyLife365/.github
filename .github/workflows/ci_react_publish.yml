@@ -37,12 +37,16 @@ jobs:
       - run: npm ci
 
       - name: Get version
+        if: ${{ inputs.publish }}
         id: version
         uses: battila7/get-version-action@v2
 
-      - run: npm version ${{ steps.version.outputs.version }} --no-git-tag-version
+      - name: Set version
+        if: ${{ inputs.publish }}
+        run: npm version ${{ steps.version.outputs.version }} --no-git-tag-version
 
-      - run: npm run build --if-present
+      - name: Build
+        run: npm run build --if-present
 
       - name: Install Playwright
         if: ${{ inputs.run-storybook }}
