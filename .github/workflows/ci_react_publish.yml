@@ -54,7 +54,7 @@ jobs:
             "npx wait-on tcp:127.0.0.1:6006 && npm run test-coverage"
 
       - uses: dorny/test-reporter@v1
-        if: always()
+        if: ${{ inputs.run-storybook }}
         with:
           name: Test Details                 
           path: junit.xml                     
