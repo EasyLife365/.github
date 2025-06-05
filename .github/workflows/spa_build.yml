@@ -43,6 +43,13 @@ jobs:
         env:
           GITHUB_PACKAGE_TOKEN: ${{ secrets.package-token }}
 
+      - name: Get version
+        id: version
+        uses: battila7/get-version-action@v2
+
+      - name: Set version
+        run: npm version ${{ steps.version.outputs.version }} --no-git-tag-version
+
       - name: Build
         run: "npm run build:${{ inputs.app-target }}"
         working-directory: ${{ inputs.app-location }}
