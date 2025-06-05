@@ -34,14 +34,23 @@ jobs:
     timeout-minutes: 15
 
     steps:
-      - name: Checkout repository
+      - name: Checkout
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - uses: bahmutov/npm-install@v1
         with:
           working-directory: ${{ inputs.app-location }}
         env:
           GITHUB_PACKAGE_TOKEN: ${{ secrets.package-token }}
+
+      - uses: EasyLife365/get-version-action@v1
+        id: version
+
+      - name: Set version
+        run: npm version ${{ steps.version.outputs.versionWithoutV }} --no-git-tag-version
+        working-directory: ${{ inputs.app-location }}
 
       - name: Build
         run: "npm run build:${{ inputs.app-target }}"
