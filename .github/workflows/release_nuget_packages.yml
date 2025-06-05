@@ -32,9 +32,8 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Get version
+      - uses: EasyLife365/get-version-action@v1
         id: version
-        uses: battila7/get-version-action@v2
 
       - name: Setup .NET
         uses: actions/setup-dotnet@v4
@@ -65,13 +64,13 @@ jobs:
       - name: Run Azurite in Background
         if: ${{ inputs.use-azurite }}
         shell: bash
-        run: azurite &
+        run: azurite --skipApiVersionCheck &
 
       - name: Build
-        run: dotnet build -c Release --no-restore -p:Version=${{ steps.version.outputs.version-without-v }}
+        run: dotnet build -c Release --no-restore -p:Version=${{ steps.version.outputs.versionWithoutV }}
 
       - name: Pack
-        run: dotnet pack -c Release --no-restore --output nupkgs -p:PackageVersion=${{ steps.version.outputs.version-without-v }} --include-symbols --include-source
+        run: dotnet pack -c Release --no-restore --output nupkgs -p:PackageVersion=${{ steps.version.outputs.versionWithoutV }} --include-symbols --include-source
 
       - name: Publish packages
         run: |

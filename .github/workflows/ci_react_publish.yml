@@ -29,6 +29,8 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - uses: actions/setup-node@v4
         with:
@@ -41,14 +43,13 @@ jobs:
         env:
           GITHUB_PACKAGE_TOKEN: ${{ secrets.GITHUB_PACKAGE_TOKEN }}
 
-      - name: Get version
+      - uses: EasyLife365/get-version-action@v1
         if: ${{ inputs.publish }}
         id: version
-        uses: battila7/get-version-action@v2
 
       - name: Set version
         if: ${{ inputs.publish }}
-        run: npm version ${{ steps.version.outputs.version }} --no-git-tag-version
+        run: npm version ${{ steps.version.outputs.versionWithoutV }} --no-git-tag-version
 
       - run: npm run build --if-present
 

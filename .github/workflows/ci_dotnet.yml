@@ -89,7 +89,7 @@ jobs:
       - name: Run Azurite in Background
         if: ${{ inputs.use-azurite }}
         shell: bash
-        run: azurite &
+        run: azurite --skipApiVersionCheck &
 
       - name: Test
         run: |
