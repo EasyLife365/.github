@@ -39,6 +39,12 @@ jobs:
         with:
           fetch-depth: 0
 
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24.x'
+          registry-url: 'https://npm.pkg.github.com'
+          scope: '@easylife365'
+
       - uses: bahmutov/npm-install@v1
         with:
           working-directory: ${{ inputs.app-location }}
