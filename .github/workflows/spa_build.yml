@@ -15,6 +15,11 @@ on:
         description: The project artifact of the app
         required: true
         type: string
+      yarn:
+        description: Use Yarn v1 for dependency installation
+        required: false
+        type: boolean
+        default: false
 
     secrets:
       package-token: 
@@ -45,7 +50,18 @@ jobs:
           registry-url: 'https://npm.pkg.github.com'
           scope: '@easylife365'
 
+      - name: Install Yarn v1
+        if: ${{ inputs.yarn }}
+        run: npm install -g yarn@1
+
+      - name: Install dependencies
+        if: ${{ inputs.yarn }}
+        run: yarn install --frozen-lockfile
+        env:
+          GITHUB_PACKAGE_TOKEN: ${{ secrets.package-token }}
+
       - uses: bahmutov/npm-install@v1
+        if: ${{ !inputs.yarn }}
         with:
           working-directory: ${{ inputs.app-location }}
         env:
@@ -54,13 +70,31 @@ jobs:
       - uses: EasyLife365/get-version-action@v1
         id: version
 
-      - name: Set version
+      - name: Set version (npm)
+        if: ${{ !inputs.yarn }}
         run: npm version ${{ steps.version.outputs.versionWithoutV }} --no-git-tag-version
         working-directory: ${{ inputs.app-location }}
 
-      - name: Build
+      - name: Set version (yarn)
+        if: ${{ inputs.yarn }}
+        run: yarn version --new-version ${{ steps.version.outputs.versionWithoutV }} --no-git-tag-version
+        working-directory: ${{ inputs.app-location }}
+        env:
+          GITHUB_PACKAGE_TOKEN: ${{ secrets.package-token }}
+
+      - name: Build (npm)
+        if: ${{ !inputs.yarn }}
         run: "npm run build:${{ inputs.app-target }}"
         working-directory: ${{ inputs.app-location }}
+        env:
+          GITHUB_PACKAGE_TOKEN: ${{ secrets.package-token }}
+
+      - name: Build (yarn)
+        if: ${{ inputs.yarn }}
+        run: "yarn build:${{ inputs.app-target }}"
+        working-directory: ${{ inputs.app-location }}
+        env:
+          GITHUB_PACKAGE_TOKEN: ${{ secrets.package-token }}
 
       - name: Upload build app artifact
         uses: actions/upload-artifact@v4

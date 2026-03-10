@@ -14,6 +14,11 @@ on:
         type: boolean
         default: false
 
+      yarn:
+        required: false
+        type: boolean
+        default: false
+
     secrets:
       GITHUB_PACKAGE_TOKEN:
         required: false
@@ -38,7 +43,18 @@ jobs:
           registry-url: 'https://npm.pkg.github.com'
           scope: '@easylife365'
 
+      - name: Install Yarn v1
+        if: ${{ inputs.yarn }}
+        run: npm install -g yarn@1
+
+      - name: Install dependencies
+        if: ${{ inputs.yarn }}
+        run: yarn install --frozen-lockfile
+        env:
+          GITHUB_PACKAGE_TOKEN: ${{ secrets.GITHUB_PACKAGE_TOKEN }}
+
       - name: Install Dependencies
+        if: ${{ !inputs.yarn }}
         run: npm ci
         env:
           GITHUB_PACKAGE_TOKEN: ${{ secrets.GITHUB_PACKAGE_TOKEN }}
@@ -47,26 +63,61 @@ jobs:
         if: ${{ inputs.publish }}
         id: version
 
-      - name: Set version
-        if: ${{ inputs.publish }}
+      - name: Set version (npm)
+        if: ${{ inputs.publish && !inputs.yarn }}
         run: npm version ${{ steps.version.outputs.versionWithoutV }} --no-git-tag-version
 
-      - run: npm run build --if-present
+      - name: Set version (yarn)
+        if: ${{ inputs.publish && inputs.yarn }}
+        run: yarn version --new-version ${{ steps.version.outputs.versionWithoutV }} --no-git-tag-version
+        env:
+          GITHUB_PACKAGE_TOKEN: ${{ secrets.GITHUB_PACKAGE_TOKEN }}
+
+      - name: Build (npm)
+        if: ${{ !inputs.yarn }}
+        run: npm run build --if-present
+        env:
+          GITHUB_PACKAGE_TOKEN: ${{ secrets.GITHUB_PACKAGE_TOKEN }}
+
+      - name: Build (yarn)
+        if: ${{ inputs.yarn }}
+        run: yarn build
+        env:
+          GITHUB_PACKAGE_TOKEN: ${{ secrets.GITHUB_PACKAGE_TOKEN }}
 
       - name: Install Playwright
         if: ${{ inputs.run-storybook }}
         run: npx playwright install --with-deps
 
-      - name: Build Storybook
-        if: ${{ inputs.run-storybook }}
+      - name: Build Storybook (npm)
+        if: ${{ inputs.run-storybook && !inputs.yarn }}
         run: npm run storybook:export
+        env:
+          GITHUB_PACKAGE_TOKEN: ${{ secrets.GITHUB_PACKAGE_TOKEN }}
 
-      - name: Serve Storybook and run tests
-        if: ${{ inputs.run-storybook }}
+      - name: Build Storybook (yarn)
+        if: ${{ inputs.run-storybook && inputs.yarn }}
+        run: yarn storybook:export
+        env:
+          GITHUB_PACKAGE_TOKEN: ${{ secrets.GITHUB_PACKAGE_TOKEN }}
+
+      - name: Serve Storybook and run tests (npm)
+        if: ${{ inputs.run-storybook && !inputs.yarn }}
         run: |
           npx concurrently -k -s first -n "SB,TEST" -c "magenta,blue" \
             "npx http-server storybook-static --port 6006 --silent" \
             "npx wait-on tcp:127.0.0.1:6006 && npm run test-coverage"
+        env:
+          GITHUB_PACKAGE_TOKEN: ${{ secrets.GITHUB_PACKAGE_TOKEN }}
+
+      - name: Serve Storybook and run tests (yarn)
+        if: ${{ inputs.run-storybook && inputs.yarn }}
+        run: |
+          npx concurrently -k -s first -n "SB,TEST" -c "magenta,blue" \
+            "npx http-server storybook-static --port 6006 --silent" \
+            "npx wait-on tcp:127.0.0.1:6006 && yarn test-coverage"
+        env:
+          GITHUB_PACKAGE_TOKEN: ${{ secrets.GITHUB_PACKAGE_TOKEN }}
 
       - uses: dorny/test-reporter@v1
         if: always() && inputs.run-storybook
