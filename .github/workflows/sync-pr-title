@@ -1,8 +1,7 @@
 name: Sync PR title with linked issues
 
 on:
-  pull_request:
-    types: [opened, edited, review_requested]
+  workflow_call:
 
 jobs:
   update-title:
