@@ -1,0 +1,106 @@
+name: Sync PR title with linked issues
+
+on:
+  workflow_call:
+
+jobs:
+  update-title:
+    runs-on: ubuntu-latest
+
+    permissions:
+      pull-requests: write
+
+    steps:
+      - name: Fetch linked issues via GraphQL
+        id: graphql
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          QUERY='
+          query($owner: String!, $repo: String!, $pr: Int!) {
+            repository(owner: $owner, name: $repo) {
+              pullRequest(number: $pr) {
+                closingIssuesReferences(first: 20) {
+                  nodes {
+                    number
+                    labels(first: 20) {
+                      nodes {
+                        name
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }'
+
+          RESPONSE=$(gh api graphql \
+            -f query="$QUERY" \
+            -f owner="${{ github.repository_owner }}" \
+            -f repo="${{ github.event.repository.name }}" \
+            -F pr=${{ github.event.pull_request.number }})
+
+          echo "$RESPONSE" > response.json
+
+          COUNT=$(jq '.data.repository.pullRequest.closingIssuesReferences.nodes | length' response.json)
+
+          if [ "$COUNT" -eq 0 ]; then
+            echo "suffix=" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+
+          SUFFIX=""
+
+          for i in $(seq 0 $((COUNT-1))); do
+            NUMBER=$(jq -r ".data.repository.pullRequest.closingIssuesReferences.nodes[$i].number" response.json)
+
+            HAS_BUG=$(jq -r ".data.repository.pullRequest.closingIssuesReferences.nodes[$i].labels.nodes[].name" response.json | grep -i "^bug$" || true)
+
+            if [ -n "$HAS_BUG" ]; then
+              WORD="Fixes"
+            else
+              WORD="Closes"
+            fi
+
+            SUFFIX="$SUFFIX $WORD #$NUMBER."
+          done
+
+          # Trim spaces
+          SUFFIX=$(echo $SUFFIX | xargs)
+
+          echo "suffix=$SUFFIX" >> $GITHUB_OUTPUT
+
+      - name: Update PR title
+        if: steps.graphql.outputs.suffix != ''
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const pr = context.payload.pull_request;
+            const suffix = "${{ steps.graphql.outputs.suffix }}";
+
+            let title = pr.title;
+
+            // Remove existing "Fixes #123." / "Closes #123." patterns
+            title = title.replace(/(\.\s*)?(Fixes|Closes) #\d+\.\s*/gi, "").trim();
+
+            // Ensure base title ends with a single period
+            if (!title.endsWith(".")) {
+              title = title + ".";
+            }
+
+            const newTitle = `${title} ${suffix}`
+              .replace(/\s+/g, " ")
+              .trim();
+
+            if (pr.title !== newTitle) {
+              await github.rest.pulls.update({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                pull_number: pr.number,
+                title: newTitle
+              });
+
+              console.log(`Updated title: ${newTitle}`);
+            } else {
+              console.log("Title already correct.");
+            }
