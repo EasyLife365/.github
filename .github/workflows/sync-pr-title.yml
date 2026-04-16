@@ -11,11 +11,23 @@ jobs:
       pull-requests: write
 
     steps:
+      - name: Generate GitHub App token
+        id: app-token
+        uses: actions/create-github-app-token@v1
+        with:
+          app-id: 3361317
+          private-key: ${{ secrets.SECOPS_TOKEN }}
       - name: Fetch linked issues via GraphQL
         id: graphql
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
         run: |
+          set -x
+
+          echo "Repo owner: ${{ github.repository_owner }}"
+          echo "Repo name: ${{ github.event.repository.name }}"
+          echo "PR number: ${{ github.event.pull_request.number }}"
+
           QUERY='
           query($owner: String!, $repo: String!, $pr: Int!) {
             repository(owner: $owner, name: $repo) {
@@ -34,17 +46,28 @@ jobs:
             }
           }'
 
+          echo "Running GraphQL query..."
+
           RESPONSE=$(gh api graphql \
             -f query="$QUERY" \
             -f owner="${{ github.repository_owner }}" \
             -f repo="${{ github.event.repository.name }}" \
             -F pr=${{ github.event.pull_request.number }})
 
+          echo "Raw response:"
+          echo "$RESPONSE"
+
           echo "$RESPONSE" > response.json
+
+          echo "Parsed response (pretty):"
+          cat response.json | jq .
 
           COUNT=$(jq '.data.repository.pullRequest.closingIssuesReferences.nodes | length' response.json)
 
+          echo "Issue count: $COUNT"
+
           if [ "$COUNT" -eq 0 ]; then
+            echo "No linked issues found"
             echo "suffix=" >> $GITHUB_OUTPUT
             exit 0
           fi
@@ -52,9 +75,15 @@ jobs:
           SUFFIX=""
 
           for i in $(seq 0 $((COUNT-1))); do
-            NUMBER=$(jq -r ".data.repository.pullRequest.closingIssuesReferences.nodes[$i].number" response.json)
+            echo "Processing issue index: $i"
 
-            HAS_BUG=$(jq -r ".data.repository.pullRequest.closingIssuesReferences.nodes[$i].labels.nodes[].name" response.json | grep -i "^bug$" || true)
+            NUMBER=$(jq -r ".data.repository.pullRequest.closingIssuesReferences.nodes[$i].number" response.json)
+            echo "Issue number: $NUMBER"
+
+            LABELS=$(jq -r ".data.repository.pullRequest.closingIssuesReferences.nodes[$i].labels.nodes[].name" response.json)
+            echo "Labels: $LABELS"
+
+            HAS_BUG=$(echo "$LABELS" | grep -i "^bug$" || true)
 
             if [ -n "$HAS_BUG" ]; then
               WORD="Fixes"
@@ -62,13 +91,20 @@ jobs:
               WORD="Closes"
             fi
 
+            echo "Selected word: $WORD"
+
             SUFFIX="$SUFFIX $WORD #$NUMBER."
           done
 
           # Trim spaces
           SUFFIX=$(echo $SUFFIX | xargs)
 
+          echo "Final computed suffix: '$SUFFIX'"
+
           echo "suffix=$SUFFIX" >> $GITHUB_OUTPUT
+
+          echo "Step output written:"
+          cat $GITHUB_OUTPUT
 
       - name: Update PR title
         if: steps.graphql.outputs.suffix != ''
