@@ -70,8 +70,16 @@ jobs:
         run: dotnet build -c Release --no-restore -p:Version=${{ steps.version.outputs.versionWithoutV }}
 
       - name: Pack
-        run: dotnet pack -c Release --no-restore --output nupkgs -p:PackageVersion=${{ steps.version.outputs.versionWithoutV }} --include-symbols --include-source
+        run: >
+          dotnet pack -c Release --no-restore
+          --output nupkgs
+          -p:PackageVersion=${{ steps.version.outputs.versionWithoutV }}
+          -p:IncludeSymbols=true
+          -p:SymbolPackageFormat=snupkg
 
       - name: Publish packages
-        run: |
-          find nupkgs -maxdepth 1 -type f -name "*.nupkg" ! -name "*.symbols.nupkg" -exec dotnet nuget push '{}' -k ${{ secrets.PACKAGE-TOKEN }} -s https://nuget.pkg.github.com/${{ github.repository_owner }}/index.json --skip-duplicate \;
+        run: >
+          dotnet nuget push "nupkgs/*.nupkg"
+          --api-key ${{ secrets.PACKAGE-TOKEN }}
+          --source https://nuget.pkg.github.com/${{ github.repository_owner }}/index.json
+          --skip-duplicate
