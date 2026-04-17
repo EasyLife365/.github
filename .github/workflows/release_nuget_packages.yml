@@ -74,4 +74,6 @@ jobs:
 
       - name: Publish packages
         run: |
-          dotnet nuget push "nupkgs/*.nupkg" -k ${{ secrets.PACKAGE-TOKEN }} -s https://nuget.pkg.github.com/${{ github.repository_owner }}/index.json --skip-duplicate
+          find nupkgs -maxdepth 1 -type f -name "*.nupkg" ! -name "*.symbols.nupkg" -print0 | while IFS= read -r -d '' package; do
+            dotnet nuget push "$package" -k ${{ secrets.PACKAGE-TOKEN }} -s https://nuget.pkg.github.com/${{ github.repository_owner }}/index.json --skip-duplicate
+          done
