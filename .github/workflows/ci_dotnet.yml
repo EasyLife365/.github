@@ -23,6 +23,11 @@ on:
         required: false
         type: string
 
+      test-filter:
+        required: false
+        type: string
+        default: ''
+
     secrets:
       PACKAGE-TOKEN:
         required: true
@@ -93,12 +98,48 @@ jobs:
 
       - name: Test
         run: |
+          TEST_FILTER="${{ inputs.test-filter }}"
+          FILTER_ARGS=()
+          FAILED=0
+
+          if [ -n "$TEST_FILTER" ]; then
+            echo "Using test filter: $TEST_FILTER"
+            FILTER_ARGS=(--filter "$TEST_FILTER")
+          else
+            echo "No test filter provided. Running all tests."
+          fi
+
           if [ -z "${{ inputs.project-name }}" ]; then
-            echo "Testing all projects..."
-            dotnet test --no-restore --verbosity normal --logger trx --results-directory ./TestResults
+            echo "Discovering test projects..."
+            mapfile -t TEST_PROJECTS < <(find . -iname "*test*.csproj" | sort)
+
+            if [ ${#TEST_PROJECTS[@]} -eq 0 ]; then
+              echo "::error::No test projects found."
+              exit 1
+            fi
+
+            echo "Found ${#TEST_PROJECTS[@]} test project(s):"
+            printf '  %s\n' "${TEST_PROJECTS[@]}"
+            echo ""
+
+            for PROJECT in "${TEST_PROJECTS[@]}"; do
+              echo "============================================"
+              echo "Testing: $PROJECT"
+              echo "============================================"
+              if ! dotnet test "$PROJECT" --no-restore --verbosity normal --logger trx --results-directory ./TestResults "${FILTER_ARGS[@]}"; then
+                echo "::warning::Tests failed in $PROJECT"
+                FAILED=1
+              fi
+              echo ""
+            done
+
+            if [ $FAILED -ne 0 ]; then
+              echo "::error::One or more test projects failed."
+              exit 1
+            fi
           else
             echo "Testing project: ${{ inputs.project-name }}"
-            dotnet test "${{ inputs.project-name }}" --no-restore --verbosity normal --logger trx --results-directory ./TestResults
+            dotnet test "${{ inputs.project-name }}" --no-restore --verbosity normal --logger trx --results-directory ./TestResults "${FILTER_ARGS[@]}"
           fi
 
       - name: Publish test results
