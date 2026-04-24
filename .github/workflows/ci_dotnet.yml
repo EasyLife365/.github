@@ -126,7 +126,7 @@ jobs:
               echo "============================================"
               echo "Testing: $PROJECT"
               echo "============================================"
-              if ! dotnet test "$PROJECT" --no-restore --verbosity normal --logger trx --results-directory ./TestResults "${FILTER_ARGS[@]}"; then
+              if ! dotnet test "$PROJECT" --no-restore --verbosity normal --logger trx --results-directory ./TestResults "${FILTER_ARGS[@]}" -- RunConfiguration.MaxCpuCount=0; then
                 echo "::warning::Tests failed in $PROJECT"
                 FAILED=1
               fi
@@ -139,7 +139,7 @@ jobs:
             fi
           else
             echo "Testing project: ${{ inputs.project-name }}"
-            dotnet test "${{ inputs.project-name }}" --no-restore --verbosity normal --logger trx --results-directory ./TestResults "${FILTER_ARGS[@]}"
+            dotnet test "${{ inputs.project-name }}" --no-restore --verbosity normal --logger trx --results-directory ./TestResults "${FILTER_ARGS[@]}" -- RunConfiguration.MaxCpuCount=0
           fi
 
       - name: Publish test results
