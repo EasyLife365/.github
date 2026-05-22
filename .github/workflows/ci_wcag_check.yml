@@ -1,0 +1,75 @@
+name: WCAG accessibility check
+
+on:
+  workflow_call:
+    inputs:
+      node-version:
+        required: false
+        type: string
+        default: "24.x"
+    secrets:
+      GITHUB_PACKAGE_TOKEN:
+        required: false
+
+permissions:
+  contents: read
+
+jobs:
+  wcag-check:
+    name: WCAG 2.1 Compliance
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ inputs.node-version }}
+
+      - name: Fetch base branch
+        if: ${{ github.event_name == 'pull_request' }}
+        run: git fetch origin ${{ github.base_ref }} --depth=1
+
+      - name: Checkout shared WCAG script
+        uses: actions/checkout@v4
+        with:
+          repository: EasyLife365/.github
+          ref: main
+          path: .shared-github
+          token: ${{ secrets.GITHUB_PACKAGE_TOKEN || github.token }}
+          sparse-checkout: |
+            scripts/check-wcag.mjs
+
+      - name: Run WCAG check on changed files
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            DIFF_RANGE="origin/${{ github.base_ref }}...HEAD"
+          elif [ "${{ github.event_name }}" = "push" ]; then
+            BEFORE_SHA="${{ github.event.before }}"
+            if [ -z "$BEFORE_SHA" ] || [ "$BEFORE_SHA" = "0000000000000000000000000000000000000000" ]; then
+              if git rev-parse --verify HEAD~1 >/dev/null 2>&1; then
+                DIFF_RANGE="HEAD~1...HEAD"
+              else
+                DIFF_RANGE="HEAD"
+              fi
+            else
+              DIFF_RANGE="$BEFORE_SHA...HEAD"
+            fi
+          else
+            echo "Unsupported event: ${{ github.event_name }}"
+            exit 1
+          fi
+
+          FILES=$(git diff --name-only --diff-filter=d "$DIFF_RANGE" -- 'src/**/*.tsx' 'src/**/*.css' | tr '\n' ' ')
+
+          if [ -z "${FILES// }" ]; then
+            echo "No changed TSX/CSS files to check."
+            exit 0
+          fi
+
+          node .shared-github/scripts/check-wcag.mjs $FILES
