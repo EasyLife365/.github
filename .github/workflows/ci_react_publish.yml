@@ -62,6 +62,8 @@ jobs:
       - uses: EasyLife365/get-version-action@v1
         if: ${{ inputs.publish }}
         id: version
+        with:
+          disableAutoPatchCount: 'true'
 
       - name: Set version (npm)
         if: ${{ inputs.publish && !inputs.yarn }}
