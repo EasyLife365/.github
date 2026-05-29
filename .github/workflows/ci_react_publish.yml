@@ -36,6 +36,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+          fetch-tags: true
 
       - uses: actions/setup-node@v4
         with:
@@ -62,8 +63,6 @@ jobs:
       - uses: EasyLife365/get-version-action@v1
         if: ${{ inputs.publish }}
         id: version
-        with:
-          disableAutoPatchCount: 'true'
 
       - name: Set version (npm)
         if: ${{ inputs.publish && !inputs.yarn }}
