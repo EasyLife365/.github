@@ -17,6 +17,7 @@ jobs:
         with:
           app-id: 3361317
           private-key: ${{ secrets.SECOPS_TOKEN }}
+          
       - name: Fetch linked issues via GraphQL
         id: graphql
         env:
