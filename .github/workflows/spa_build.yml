@@ -20,6 +20,16 @@ on:
         required: false
         type: boolean
         default: false
+      telemetry-client-id:
+        description: Optional telemetry client id override injected at build time
+        required: false
+        type: string
+        default: ''
+      telemetry-env-name:
+        description: The environment variable name to use for telemetry client id
+        required: false
+        type: string
+        default: 'VITE_TELEMETRY_CLIENTID'
 
     secrets:
       package-token: 
@@ -82,6 +92,10 @@ jobs:
         working-directory: ${{ inputs.app-location }}
         env:
           GITHUB_PACKAGE_TOKEN: ${{ secrets.package-token }}
+
+      - name: Override telemetry env variable
+        if: inputs.telemetry-client-id != ''
+        run: echo "${{ inputs.telemetry-env-name }}=${{ inputs.telemetry-client-id }}" >> $GITHUB_ENV
 
       - name: Build (npm)
         if: ${{ !inputs.yarn }}
