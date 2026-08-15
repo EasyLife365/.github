@@ -28,6 +28,12 @@ on:
         type: string
         default: ''
 
+      use-mtp-logging:
+        description: 'Use MTP-native --report-trx instead of --logger trx (required for xunit v3 / .NET 10+)'
+        required: false
+        type: boolean
+        default: false
+
     secrets:
       PACKAGE-TOKEN:
         required: true
@@ -104,6 +110,11 @@ jobs:
           TEST_FILTER="${{ inputs.test-filter }}"
           FILTER_ARGS=()
           FAILED=0
+          if [ "${{ inputs.use-mtp-logging }}" = "true" ]; then
+            LOGGER_ARGS=(--report-trx --results-directory ./TestResults)
+          else
+            LOGGER_ARGS=(--logger trx --results-directory ./TestResults)
+          fi
 
           if [ -n "$TEST_FILTER" ]; then
             echo "Using test filter: $TEST_FILTER"
@@ -129,7 +140,7 @@ jobs:
               echo "============================================"
               echo "Testing: $PROJECT"
               echo "============================================"
-              if ! dotnet test "$PROJECT" --no-restore --verbosity normal --logger trx --results-directory ./TestResults "${FILTER_ARGS[@]}" -- RunConfiguration.MaxCpuCount=0; then
+              if ! dotnet test "$PROJECT" --no-restore --verbosity normal "${LOGGER_ARGS[@]}" "${FILTER_ARGS[@]}"; then
                 echo "::warning::Tests failed in $PROJECT"
                 FAILED=1
               fi
@@ -142,7 +153,7 @@ jobs:
             fi
           else
             echo "Testing project: ${{ inputs.project-name }}"
-            dotnet test "${{ inputs.project-name }}" --no-restore --verbosity normal --logger trx --results-directory ./TestResults "${FILTER_ARGS[@]}" -- RunConfiguration.MaxCpuCount=0
+            dotnet test "${{ inputs.project-name }}" --no-restore --verbosity normal "${LOGGER_ARGS[@]}" "${FILTER_ARGS[@]}"
           fi
 
       - name: Publish test results
