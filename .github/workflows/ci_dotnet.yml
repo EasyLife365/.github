@@ -34,6 +34,12 @@ on:
         type: boolean
         default: false
 
+      use-test-logger:
+        description: 'Attach test logger arguments (disable for MTP setups that fail when logger args are present)'
+        required: false
+        type: boolean
+        default: true
+
       run-tests:
         description: 'Whether to run tests (set to false to only build)'
         required: false
@@ -151,10 +157,15 @@ jobs:
           TEST_FILTER="${{ inputs.test-filter }}"
           FILTER_ARGS=()
           FAILED=0
-          if [ "${{ inputs.use-mtp-logging }}" = "true" ]; then
-            LOGGER_ARGS=(--report-trx --results-directory ./TestResults)
+
+          if [ "${{ inputs.use-test-logger }}" = "true" ]; then
+            if [ "${{ inputs.use-mtp-logging }}" = "true" ]; then
+              LOGGER_ARGS=(--report-trx --results-directory ./TestResults)
+            else
+              LOGGER_ARGS=(--logger trx --results-directory ./TestResults)
+            fi
           else
-            LOGGER_ARGS=(--logger trx --results-directory ./TestResults)
+            LOGGER_ARGS=(--results-directory ./TestResults)
           fi
 
           if [ -n "$TEST_FILTER" ]; then
@@ -199,7 +210,7 @@ jobs:
 
       - name: Publish test results
         uses: EnricoMi/publish-unit-test-result-action@v2
-        if: ${{ always() && inputs.run-tests }}
+        if: ${{ always() && inputs.run-tests && inputs.use-test-logger }}
         with:
           files: |
             TestResults/*.trx
