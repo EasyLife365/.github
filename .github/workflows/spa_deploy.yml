@@ -53,5 +53,5 @@ jobs:
         with:
           azure_static_web_apps_api_token: ${{ env.SWA_DEPLOYMENT_TOKEN }}
           action: "upload"
-          app_location: "./app/."
+          app_location: "./app"
           skip_app_build: "true"

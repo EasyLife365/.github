@@ -1,0 +1,80 @@
+name: Azure Storage Sync (Reusable)
+
+on:
+  workflow_call:
+    inputs:
+      environment:
+        description: GitHub environment name (for Azure credentials)
+        required: true
+        type: string
+      azure-storage-account:
+        description: Azure Storage account for solution merging
+        required: true
+        type: string
+      azure-storage-folder:
+        description: Storage folder for solution merging
+        required: true
+        type: string
+      app-artifact:
+        description: GitHub artifact name containing the built app
+        required: true
+        type: string
+      app-location:
+        description: App directory location (used for merge staging)
+        required: true
+        type: string
+      artifact-output:
+        description: Output artifact name for merged build (optional - if not set, artifact won't be uploaded)
+        required: false
+        type: string
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  sync-azure-storage:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment: ${{ inputs.environment }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Download built artifact from GitHub
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ inputs.app-artifact }}
+          path: ${{ inputs.app-location }}/dist
+
+      - name: Azure Login
+        uses: azure/login@v2
+        with:
+          client-id: ${{ vars.AADAPPID }}
+          tenant-id: ${{ vars.TENANTID }}
+          subscription-id: ${{ vars.SUBSCRIPTIONID }}
+
+      - name: Upload current build to blob storage for solution merging
+        run: |
+          az storage blob upload-batch --overwrite --account-name ${{ inputs.azure-storage-account }} --source "${{ inputs.app-location }}/dist/" --destination ${{ inputs.azure-storage-folder }}
+
+      - name: Create target folder for merged solution
+        run: mkdir -p "${{ inputs.app-location }}/build_final/"
+
+      - name: Download merged solution from blob storage
+        run: |
+          az storage blob download-batch --account-name ${{ inputs.azure-storage-account }} --destination "${{ inputs.app-location }}/build_final/" --pattern "*.*" --source ${{ inputs.azure-storage-folder }}
+
+      - name: Upload merged build artifact to GitHub
+        if: ${{ inputs.artifact-output != '' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ inputs.artifact-output }}
+          path: ${{ inputs.app-location }}/build_final
+          retention-days: 5
+
+      - name: Clean up blob storage files older than 3 months
+        run: |
+          cutoff=$(date -u -d '3 months ago' '+%Y-%m-%dT00:00Z')
+          az storage blob delete-batch --account-name ${{ inputs.azure-storage-account }} -s ${{ inputs.azure-storage-folder }} --if-unmodified-since "$cutoff"

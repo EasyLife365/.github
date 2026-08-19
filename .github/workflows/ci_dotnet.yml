@@ -1,4 +1,4 @@
-name: Dotnet tests
+name: Dotnet Build & Test
 
 on:
   workflow_call:
@@ -33,6 +33,36 @@ on:
         required: false
         type: boolean
         default: false
+
+      run-tests:
+        description: 'Whether to run tests (set to false to only build)'
+        required: false
+        type: boolean
+        default: true
+
+      upload-artifacts:
+        description: 'Whether to upload build artifacts'
+        required: false
+        type: boolean
+        default: false
+
+      artifacts-path:
+        description: 'Path to publish artifacts (relative to repo root, e.g. ./published)'
+        required: false
+        type: string
+        default: './published'
+
+      artifact-name:
+        description: 'Name of the artifact to upload (optional)'
+        required: false
+        type: string
+        default: ''
+
+      artifact-retention-days:
+        description: 'Number of days to retain artifacts'
+        required: false
+        type: number
+        default: 15
 
     secrets:
       PACKAGE-TOKEN:
@@ -88,24 +118,35 @@ jobs:
             dotnet build "${{ inputs.project-name }}" --configuration Release --no-restore
           fi
 
+      - name: Publish
+        if: ${{ inputs.upload-artifacts }}
+        run: |
+          if [ -z "${{ inputs.project-name }}" ]; then
+            echo "::error::project-name is required when upload-artifacts is true."
+            exit 1
+          fi
+          echo "Publishing project: ${{ inputs.project-name }}"
+          dotnet publish "${{ inputs.project-name }}" --configuration Release --no-build --output "${{ inputs.artifacts-path }}"
+
       - name: Setup Node.js environment
-        if: ${{ inputs.use-azurite || inputs.add-function-core-tools }}
+        if: ${{ (inputs.use-azurite || inputs.add-function-core-tools) && inputs.run-tests }}
         uses: actions/setup-node@v4
 
       - name: Install Azure Functions Core Tools
-        if: ${{ inputs.add-function-core-tools }}
+        if: ${{ inputs.add-function-core-tools && inputs.run-tests }}
         run: npm install -g azure-functions-core-tools@4 --unsafe-perm true
 
       - name: Install Azurite
-        if: ${{ inputs.use-azurite }}
+        if: ${{ inputs.use-azurite && inputs.run-tests }}
         run: npm install -g azurite
 
       - name: Run Azurite in Background
-        if: ${{ inputs.use-azurite }}
+        if: ${{ inputs.use-azurite && inputs.run-tests }}
         shell: bash
         run: azurite --skipApiVersionCheck &
 
       - name: Test
+        if: ${{ inputs.run-tests }}
         run: |
           TEST_FILTER="${{ inputs.test-filter }}"
           FILTER_ARGS=()
@@ -158,7 +199,16 @@ jobs:
 
       - name: Publish test results
         uses: EnricoMi/publish-unit-test-result-action@v2
-        if: always()
+        if: ${{ always() && inputs.run-tests }}
         with:
           files: |
             TestResults/*.trx
+
+      - name: Upload artifacts
+        if: ${{ inputs.upload-artifacts }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ inputs.artifact-name != '' && inputs.artifact-name || github.event.repository.name }}
+          path: ${{ inputs.artifacts-path }}
+          retention-days: ${{ inputs.artifact-retention-days }}
+          include-hidden-files: true
