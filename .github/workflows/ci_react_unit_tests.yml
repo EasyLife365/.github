@@ -1,0 +1,78 @@
+name: React unit tests
+
+on:
+  workflow_call:
+    inputs:
+      node-version:
+        required: false
+        type: string
+        default: '24.x'
+      yarn:
+        required: false
+        type: boolean
+        default: true
+    secrets:
+      GITHUB_PACKAGE_TOKEN:
+        required: false
+
+permissions:
+  checks: write
+  contents: read
+  pull-requests: write
+
+jobs:
+  unit-tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      LANG: en_US.UTF-8
+      LC_ALL: en_US.UTF-8
+      NODE_OPTIONS: --max-old-space-size=4096
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ inputs.node-version }}
+          cache: ${{ inputs.yarn && 'yarn' || 'npm' }}
+          registry-url: 'https://npm.pkg.github.com'
+          scope: '@easylife365'
+
+      - name: Install Yarn v1
+        if: ${{ inputs.yarn }}
+        run: npm install -g yarn@1
+
+      - name: Install dependencies
+        if: ${{ inputs.yarn }}
+        run: yarn install --frozen-lockfile
+        env:
+          GITHUB_PACKAGE_TOKEN: ${{ secrets.GITHUB_PACKAGE_TOKEN }}
+
+      - name: Run vitest
+        if: ${{ inputs.yarn }}
+        run: yarn test
+
+      - name: Install dependencies
+        if: ${{ !inputs.yarn }}
+        run: npm ci
+        env:
+          GITHUB_PACKAGE_TOKEN: ${{ secrets.GITHUB_PACKAGE_TOKEN }}
+
+      - name: Run vitest
+        if: ${{ !inputs.yarn }}
+        run: npm test
+
+      - uses: dorny/test-reporter@v1
+        if: always() && hashFiles('junit.xml') != ''
+        with:
+          name: Unit Test Results
+          path: junit.xml
+          reporter: jest-junit
+
+      - name: Publish Unit Test Results
+        uses: EnricoMi/publish-unit-test-result-action@v2
+        if: always() && hashFiles('junit.xml') != ''
+        with:
+          files: |
+            junit.xml
