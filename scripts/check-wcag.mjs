@@ -21,8 +21,7 @@ const rules = [
     appliesTo: ".tsx",
     test(filePath, content) {
       const violations = [];
-      const interactivePattern =
-        /<(button|input|select|textarea)\b([\s\S]*?)(\/>|>)/gi;
+      const interactivePattern = /<([a-z][a-z0-9-]*)\b([\s\S]*?)(\/>|>)/g;
 
       let match;
       while ((match = interactivePattern.exec(content)) !== null) {
@@ -31,6 +30,7 @@ const rules = [
         const closing = match[3];
         const lineNumber = content.slice(0, match.index).split("\n").length;
 
+        if (!['button', 'input', 'select', 'textarea', 'a'].includes(tagName)) continue;
         if (/aria-label\s*=/.test(attrs)) continue;
         if (/aria-labelledby\s*=/.test(attrs)) continue;
         if (/title\s*=/.test(attrs)) continue;
