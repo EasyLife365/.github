@@ -55,14 +55,20 @@ jobs:
       - name: Install Playwright
         if: ${{ inputs.yarn }}
         run: yarn playwright install --with-deps
+        env:
+          GITHUB_PACKAGE_TOKEN: ${{ secrets.GITHUB_PACKAGE_TOKEN }}
 
       - name: Build Storybook
         if: ${{ inputs.yarn }}
         run: yarn storybook:export
+        env:
+          GITHUB_PACKAGE_TOKEN: ${{ secrets.GITHUB_PACKAGE_TOKEN }}
 
       - name: Serve Storybook and run tests
         if: ${{ inputs.yarn }}
         run: yarn test:ci-storybook
+        env:
+          GITHUB_PACKAGE_TOKEN: ${{ secrets.GITHUB_PACKAGE_TOKEN }}
 
       - name: Install dependencies
         if: ${{ !inputs.yarn }}
