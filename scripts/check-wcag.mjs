@@ -29,18 +29,26 @@ const rules = [
         const attrs = match[2];
         const closing = match[3];
         const lineNumber = content.slice(0, match.index).split("\n").length;
+        const hasTextContent = (() => {
+          if (tagName !== "a" || closing === "/>") return false;
+          const endIndex = content.indexOf("</a>", interactivePattern.lastIndex);
+          if (endIndex === -1) return false;
+          const innerContent = content.slice(interactivePattern.lastIndex, endIndex).replace(/<[^>]*>/g, "").trim();
+          return innerContent.length > 0;
+        })();
 
         if (!['button', 'input', 'select', 'textarea', 'a'].includes(tagName)) continue;
         if (/aria-label\s*=/.test(attrs)) continue;
         if (/aria-labelledby\s*=/.test(attrs)) continue;
         if (/title\s*=/.test(attrs)) continue;
+        if (hasTextContent) continue;
         if (tagName === "button" && closing === ">") continue;
         if (/type\s*=\s*["'{]?\s*["']?hidden["']?/.test(attrs)) continue;
         if (/\bid\s*=/.test(attrs) && content.includes("htmlFor")) continue;
 
         violations.push({
           line: lineNumber,
-          message: `<${tagName}> is missing an accessible label (aria-label, aria-labelledby, or title).`,
+          message: `<${tagName}> is missing an accessible label (aria-label, aria-labelledby, title, or text content for links/buttons).`,
         });
       }
 
