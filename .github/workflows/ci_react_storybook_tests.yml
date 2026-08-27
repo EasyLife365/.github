@@ -11,6 +11,10 @@ on:
         required: false
         type: boolean
         default: true
+      storybook-shards:
+        required: false
+        type: string
+        default: '["1/1"]'
     secrets:
       GITHUB_PACKAGE_TOKEN:
         required: false
@@ -22,12 +26,18 @@ permissions:
 
 jobs:
   storybook-tests:
+    name: storybook-tests (${{ matrix.storybook-shard }})
     runs-on: ubuntu-latest
     timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        storybook-shard: ${{ fromJSON(inputs.storybook-shards) }}
     env:
       LANG: en_US.UTF-8
       LC_ALL: en_US.UTF-8
       NODE_OPTIONS: --max-old-space-size=4096
+      STORYBOOK_SHARD: ${{ matrix.storybook-shard }}
 
     steps:
       - uses: actions/checkout@v4
@@ -52,9 +62,17 @@ jobs:
         env:
           GITHUB_PACKAGE_TOKEN: ${{ secrets.GITHUB_PACKAGE_TOKEN }}
 
+      - name: Cache Playwright browsers
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ hashFiles('**/yarn.lock', '**/package-lock.json') }}
+          restore-keys: |
+            playwright-${{ runner.os }}-
+
       - name: Install Playwright
         if: ${{ inputs.yarn }}
-        run: yarn playwright install --with-deps
+        run: yarn playwright install chromium --with-deps
         env:
           GITHUB_PACKAGE_TOKEN: ${{ secrets.GITHUB_PACKAGE_TOKEN }}
 
@@ -76,9 +94,18 @@ jobs:
         env:
           GITHUB_PACKAGE_TOKEN: ${{ secrets.GITHUB_PACKAGE_TOKEN }}
 
+      - name: Cache Playwright browsers
+        if: ${{ !inputs.yarn }}
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ hashFiles('**/package-lock.json', '**/yarn.lock') }}
+          restore-keys: |
+            playwright-${{ runner.os }}-
+
       - name: Install Playwright
         if: ${{ !inputs.yarn }}
-        run: npx playwright install --with-deps
+        run: npx playwright install chromium --with-deps
 
       - name: Build Storybook
         if: ${{ !inputs.yarn }}
@@ -91,7 +118,7 @@ jobs:
       - uses: dorny/test-reporter@v1
         if: always() && hashFiles('junit.xml') != ''
         with:
-          name: Storybook Test Results
+          name: Storybook Test Results ${{ matrix.storybook-shard }}
           path: junit.xml
           reporter: jest-junit
 
@@ -99,5 +126,6 @@ jobs:
         uses: EnricoMi/publish-unit-test-result-action@v2
         if: always() && hashFiles('junit.xml') != ''
         with:
+          check_name: Storybook Test Results ${{ matrix.storybook-shard }}
           files: |
             junit.xml
