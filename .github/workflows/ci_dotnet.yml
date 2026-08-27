@@ -110,7 +110,6 @@ jobs:
 
       - name: Install dependencies
         run: |
-          set +e
           if [ -z "${{ inputs.project-name }}" ]; then
             echo "Restoring all projects..."
             dotnet restore
