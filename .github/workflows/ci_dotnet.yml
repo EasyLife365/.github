@@ -27,6 +27,12 @@ on:
         required: false
         type: string
         default: ''
+      
+      allow-zero-tests:
+        description: 'Treat zero discovered/matched tests as warning instead of failure'
+        required: false
+        type: boolean
+        default: false
 
       use-mtp-logging:
         description: 'Use MTP-native --report-trx instead of --logger trx (required for xunit v3 / .NET 10+)'
@@ -104,6 +110,7 @@ jobs:
 
       - name: Install dependencies
         run: |
+          set +e
           if [ -z "${{ inputs.project-name }}" ]; then
             echo "Restoring all projects..."
             dotnet restore
@@ -155,8 +162,14 @@ jobs:
         if: ${{ inputs.run-tests }}
         run: |
           TEST_FILTER="${{ inputs.test-filter }}"
+          ALLOW_ZERO_TESTS="${{ inputs.allow-zero-tests }}"
           FILTER_ARGS=()
           FAILED=0
+          
+          is_zero_test_output() {
+            local output="$1"
+            echo "$output" | grep -Eiq "Zero tests ran|No test matches the given testcase filter|No test is available in|No tests were found"
+          }
 
           if [ "${{ inputs.use-test-logger }}" = "true" ]; then
             if [ "${{ inputs.use-mtp-logging }}" = "true" ]; then
@@ -175,6 +188,7 @@ jobs:
             echo "No test filter provided. Running all tests."
           fi
 
+          set +e
           if [ -z "${{ inputs.project-name }}" ]; then
             echo "Discovering test projects..."
             mapfile -t TEST_PROJECTS < <(find . -iname "*test*.csproj" | sort)
@@ -192,9 +206,16 @@ jobs:
               echo "============================================"
               echo "Testing: $PROJECT"
               echo "============================================"
-              if ! dotnet test "$PROJECT" --no-restore --verbosity normal "${LOGGER_ARGS[@]}" "${FILTER_ARGS[@]}"; then
-                echo "::warning::Tests failed in $PROJECT"
-                FAILED=1
+              output=$(dotnet test "$PROJECT" --no-restore --verbosity normal "${LOGGER_ARGS[@]}" "${FILTER_ARGS[@]}" 2>&1)
+              exit_code=$?
+              echo "$output"
+              if [ $exit_code -ne 0 ]; then
+                if [ "$ALLOW_ZERO_TESTS" = "true" ] && is_zero_test_output "$output"; then
+                  echo "::warning::Zero tests ran for $PROJECT; continuing."
+                else
+                  echo "::warning::Tests failed in $PROJECT"
+                  FAILED=1
+                fi
               fi
               echo ""
             done
@@ -205,8 +226,19 @@ jobs:
             fi
           else
             echo "Testing project: ${{ inputs.project-name }}"
-            dotnet test "${{ inputs.project-name }}" --no-restore --verbosity normal "${LOGGER_ARGS[@]}" "${FILTER_ARGS[@]}"
+            output=$(dotnet test "${{ inputs.project-name }}" --no-restore --verbosity normal "${LOGGER_ARGS[@]}" "${FILTER_ARGS[@]}" 2>&1)
+            exit_code=$?
+            echo "$output"
+            if [ $exit_code -ne 0 ]; then
+              if [ "$ALLOW_ZERO_TESTS" = "true" ] && is_zero_test_output "$output"; then
+                echo "::warning::Zero tests ran for ${{ inputs.project-name }}; continuing."
+              else
+                echo "::error::Tests failed in ${{ inputs.project-name }}"
+                exit 1
+              fi
+            fi
           fi
+          set -e
 
       - name: Publish test results
         uses: EnricoMi/publish-unit-test-result-action@v2
