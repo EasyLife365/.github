@@ -147,10 +147,14 @@ jobs:
       - name: Install Azure Functions Core Tools
         if: ${{ inputs.add-function-core-tools && inputs.run-tests }}
         run: npm install -g azure-functions-core-tools@4 --unsafe-perm true
+        env:
+          GITHUB_PACKAGE_TOKEN: ${{ secrets.PACKAGE-TOKEN }}
 
       - name: Install Azurite
         if: ${{ inputs.use-azurite && inputs.run-tests }}
         run: npm install -g azurite
+        env:
+          GITHUB_PACKAGE_TOKEN: ${{ secrets.PACKAGE-TOKEN }}
 
       - name: Run Azurite in Background
         if: ${{ inputs.use-azurite && inputs.run-tests }}
