@@ -144,11 +144,19 @@ jobs:
         if: ${{ (inputs.use-azurite || inputs.add-function-core-tools) && inputs.run-tests }}
         uses: actions/setup-node@v4
 
+      # Installed from Microsoft's apt repository: `npm install -g azure-functions-core-tools@4` has failed with
+      # npm E401 on the hosted runners since 2026-08-27 (Identity, Agents, Notification), while the apt package
+      # installs reliably. The Microsoft repository is added only when the runner image does not have it yet.
       - name: Install Azure Functions Core Tools
         if: ${{ inputs.add-function-core-tools && inputs.run-tests }}
-        run: npm install -g azure-functions-core-tools@4 --unsafe-perm true
-        env:
-          GITHUB_PACKAGE_TOKEN: ${{ secrets.PACKAGE-TOKEN }}
+        run: |
+          if ! grep -rqs "packages.microsoft.com" /etc/apt/sources.list.d/; then
+            curl -fsSL https://packages.microsoft.com/keys/microsoft.asc | gpg --dearmor | sudo tee /etc/apt/trusted.gpg.d/microsoft.gpg > /dev/null
+            echo "deb [arch=amd64] https://packages.microsoft.com/repos/microsoft-ubuntu-$(lsb_release -cs)-prod $(lsb_release -cs) main" | sudo tee /etc/apt/sources.list.d/microsoft-prod.list > /dev/null
+          fi
+          sudo apt-get update
+          sudo apt-get install -y azure-functions-core-tools-4
+          func --version
 
       - name: Install Azurite
         if: ${{ inputs.use-azurite && inputs.run-tests }}
