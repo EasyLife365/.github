@@ -25,6 +25,17 @@ on:
        required: false
        type: string
        default: ''
+     telemetry-connection-string:
+       description: Application Insights connection string injected at build time. Preferred over the
+         instrumentation key, which is the retired ingestion path; leave empty to keep the key only.
+       required: false
+       type: string
+       default: ''
+     telemetry-connection-string-env-name:
+       description: The environment variable name to use for the telemetry connection string
+       required: false
+       type: string
+       default: 'VITE_EASY_APPINSIGHTS_CONNECTIONSTRING'
      telemetry-env-name:
        description: The environment variable name to use for telemetry client id
        required: false
@@ -100,6 +111,10 @@ jobs:
      - name: Override telemetry env variable
        if: inputs.telemetry-client-id != ''
        run: echo "${{ inputs.telemetry-env-name }}=${{ inputs.telemetry-client-id }}" >> $GITHUB_ENV
+
+     - name: Override telemetry connection string env variable
+       if: inputs.telemetry-connection-string != ''
+       run: echo "${{ inputs.telemetry-connection-string-env-name }}=${{ inputs.telemetry-connection-string }}" >> $GITHUB_ENV
 
      - name: Build (npm)
        if: ${{ !inputs.yarn }}
