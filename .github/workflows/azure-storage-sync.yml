@@ -27,6 +27,11 @@ on:
         description: Output artifact name for merged build (optional - if not set, artifact won't be uploaded)
         required: false
         type: string
+      blob-retention-days:
+        description: Delete blobs in the storage folder that have not been modified for this many days. Defaults to 90 (about three months), which is what every caller did before this input existed.
+        required: false
+        type: number
+        default: 90
 
 permissions:
   id-token: write
@@ -74,7 +79,12 @@ jobs:
           path: ${{ inputs.app-location }}/build_final
           retention-days: 5
 
-      - name: Clean up blob storage files older than 3 months
+      # The retention window goes through an env var rather than being interpolated
+      # straight into the command line, so the value cannot extend the shell command.
+      - name: Clean up blob storage files past the retention window
+        env:
+          RETENTION_DAYS: ${{ inputs.blob-retention-days }}
         run: |
-          cutoff=$(date -u -d '3 months ago' '+%Y-%m-%dT00:00Z')
+          cutoff=$(date -u -d "${RETENTION_DAYS} days ago" '+%Y-%m-%dT00:00Z')
+          echo "Deleting blobs in ${{ inputs.azure-storage-folder }} not modified since $cutoff (retention: ${RETENTION_DAYS} days)"
           az storage blob delete-batch --account-name ${{ inputs.azure-storage-account }} -s ${{ inputs.azure-storage-folder }} --if-unmodified-since "$cutoff"
