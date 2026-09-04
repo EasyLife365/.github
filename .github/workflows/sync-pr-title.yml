@@ -94,7 +94,14 @@ jobs:
 
             echo "Selected word: $WORD"
 
-            SUFFIX="$SUFFIX $WORD #$NUMBER."
+            # The period is a SEPARATOR between entries, never a terminator: a title ends
+            # "Closes #123", not "Closes #123.". With several linked issues that gives
+            # "Closes #1. Closes #2", which still reads as sentences.
+            if [ -z "$SUFFIX" ]; then
+              SUFFIX="$WORD #$NUMBER"
+            else
+              SUFFIX="$SUFFIX. $WORD #$NUMBER"
+            fi
           done
 
           # Trim spaces
