@@ -117,8 +117,13 @@ jobs:
 
             let title = pr.title;
 
-            // Remove existing "Fixes #123." / "Closes #123." patterns
-            title = title.replace(/(\.\s*)?(Fixes|Closes) #\d+\.\s*/gi, "").trim();
+            // Remove existing "Fixes #123." / "Closes #123." patterns.
+            // The trailing period is optional and the separator may be any whitespace:
+            // docs/contributing.md prescribes "Fixes #123" with no trailing period, and
+            // requiring one here meant the existing suffix was never stripped, so a second
+            // one was appended - "Implement x. Closes #1" became
+            // "Implement x. Closes #1. Closes #1."
+            title = title.replace(/(\.\s*)?(Fixes|Closes|Resolves)\s+#\d+\.?\s*/gi, "").trim();
 
             // Ensure base title ends with a single period
             if (!title.endsWith(".")) {
