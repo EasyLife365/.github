@@ -94,7 +94,16 @@ jobs:
 
             echo "Selected word: $WORD"
 
-            SUFFIX="$SUFFIX $WORD #$NUMBER."
+            # Entries are comma separated and the suffix is never terminated, so a title
+            # ends "Closes #123" and several linked issues give "Closes #1, Closes #2".
+            # The keyword is repeated on every entry rather than shared ("Closes #1, #2")
+            # because the keyword is chosen per issue from its labels, so a mixed set has
+            # to be expressible: "Fixes #5, Closes #6".
+            if [ -z "$SUFFIX" ]; then
+              SUFFIX="$WORD #$NUMBER"
+            else
+              SUFFIX="$SUFFIX, $WORD #$NUMBER"
+            fi
           done
 
           # Trim spaces
@@ -117,13 +126,19 @@ jobs:
 
             let title = pr.title;
 
-            // Remove existing "Fixes #123." / "Closes #123." patterns.
-            // The trailing period is optional and the separator may be any whitespace:
-            // docs/contributing.md prescribes "Fixes #123" with no trailing period, and
-            // requiring one here meant the existing suffix was never stripped, so a second
-            // one was appended - "Implement x. Closes #1" became
-            // "Implement x. Closes #1. Closes #1."
-            title = title.replace(/(\.\s*)?(Fixes|Closes|Resolves)\s+#\d+\.?\s*/gi, "").trim();
+            // Remove any existing "Fixes #123" / "Closes #123" suffix so it is replaced
+            // rather than appended to.
+            //
+            // Both the punctuation before an entry and the punctuation after it are
+            // optional and may be a period or a comma. That covers every form this
+            // workflow has ever written - ". Closes #1." from the original version,
+            // ". Closes #1" and ". Closes #1. Closes #2" from later ones, and
+            // ", Closes #2" from the current comma-separated form. Requiring a trailing
+            // period is what made the suffix accumulate instead of being replaced.
+            title = title.replace(/([.,]\s*)?(Fixes|Closes|Resolves)\s+#\d+[.,]?\s*/gi, "").trim();
+
+            // A trailing separator can survive when the statement itself ended in one.
+            title = title.replace(/[.,]\s*$/, "").trim();
 
             // Ensure base title ends with a single period
             if (!title.endsWith(".")) {
