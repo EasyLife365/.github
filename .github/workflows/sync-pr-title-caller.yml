@@ -1,0 +1,15 @@
+name: Sync PR title with linked issues
+
+on:
+  pull_request:
+    types:
+      - opened
+      - edited
+      - reopened
+      - ready_for_review
+      - review_requested
+
+jobs:
+  call-sync-pr-title:
+    uses: EasyLife365/.github/.github/workflows/sync-pr-title.yml@main
+    secrets: inherit
