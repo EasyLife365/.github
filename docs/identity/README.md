@@ -4,6 +4,9 @@ Phase 0 of the managed-identity redesign: a single enumeration of every applicat
 microservice across the EasyLife 365 platform, what its identity may reach, and which shared
 identity is proposed to replace it.
 
+Platform architecture that shapes this inventory — how services are allowed to reach each other,
+and the improvements backlog — is in [`../architecture/`](../architecture/).
+
 | File | What it is |
 |---|---|
 | [`identity-inventory.json`](identity-inventory.json) | The dataset. Authoritative — edit this. |
