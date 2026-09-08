@@ -1,0 +1,1257 @@
+{
+  "schemaVersion": "1.0",
+  "generated": "2026-09-08",
+  "derivedFrom": "Bicep templates and provision-environment.ps1 at branch claude/permission-management-queues-storage-fdhayf",
+  "method": "static read of infrastructure-as-code; NOT a read of live Azure state (see scripts/identity/)",
+  "rings": [
+    {
+      "code": "d",
+      "name": "development"
+    },
+    {
+      "code": "i",
+      "name": "insiders"
+    },
+    {
+      "code": "p",
+      "name": "production"
+    },
+    {
+      "code": "int",
+      "name": "integration",
+      "products": [
+        "collaboration",
+        "exchange"
+      ],
+      "note": "el-int-<stage> / separate templates"
+    }
+  ],
+  "roleDefinitions": {
+    "StorageAccountContributor": "17d1049b-9a84-46fb-8f53-869881c3d3ab",
+    "StorageTableDataContributor": "0a9a7e1f-b9d0-4cc4-a60d-0319b160aaa3",
+    "StorageTableDataReader": "76199698-9eea-4c19-bc75-cec21354c6b6",
+    "StorageQueueDataContributor": "974c5e8b-45b9-4653-ba55-5f855dd0fb88",
+    "StorageQueueDataReader": "19e7f393-937e-4f77-808e-94535e297925",
+    "StorageBlobDataOwner": "b7e6dc6d-f1e8-4753-8033-0f276bb0955b",
+    "StorageBlobDataContributor": "ba92f5b4-2d11-453d-a403-e96b0029c9fe",
+    "KeyVaultSecretsUser": "4633458b-17de-408a-b874-0445c86b69e6",
+    "KeyVaultSecretsOfficer": "b86a8fe4-44ce-4948-aee5-eccb2c155cd7",
+    "KeyVaultCertificatesOfficer": "a4417e6f-fecd-4de8-b567-7b0420556985",
+    "KeyVaultCryptoUser": "12338af0-0e69-4776-bea7-57ae8d297424",
+    "MonitoringReader": "43d0d8ad-25c7-4714-9337-8ba259a9fe05",
+    "ServiceBusDataReceiver": "4f6d3b9b-027b-4f4c-9142-0e5a2a2247e0",
+    "ServiceBusDataSender": "69a216fc-b8fb-44d8-bc22-1f3c2cd27a39",
+    "CognitiveServicesOpenAIUser": "5e0bd9bd-7b93-4f28-af87-19fc36ad61bd",
+    "Contributor": "b24988ac-6180-42a0-ab88-20f7382dd24c"
+  },
+  "products": [
+    {
+      "key": "collaboration",
+      "name": "EasyLife 365 Collaboration",
+      "repo": "EasyLife365-Collaboration",
+      "namePrefix": "el-<ring>",
+      "deploymentScope": "managementGroup",
+      "nodeModel": "nodes[] (per-region)",
+      "productionNodes": [
+        {
+          "postfix": "we",
+          "location": "westeurope"
+        }
+      ],
+      "infrastructure": "_devops/automation/deployment/infrastructure/bicep",
+      "scopes": {
+        "rg:storage": "rg-el-<ring>-storage",
+        "rg:core-storage": "rg-el-<ring>-core-storage",
+        "rg:engine-node": "rg-el-<ring>-<rgname>-eng-<node>",
+        "rg:api-node": "rg-el-<ring>-<rgname>-api-<node>",
+        "rg:security": "rg-el-<ring>-security",
+        "rg:backup": "rg-el-<ring>-backup",
+        "rg:servicebus": "discovered by tag (central messaging)"
+      },
+      "apps": [
+        {
+          "id": "collab-api-app",
+          "resourceName": "el-<ring>-api-app-<node>",
+          "kind": "api",
+          "source": "App/EL.App.API",
+          "proposedIdentity": "id-collab-api-<ring>",
+          "identityType": "SystemAssigned"
+        },
+        {
+          "id": "collab-api-app-shared",
+          "resourceName": "el-<ring>-api-shared-app-<node>",
+          "kind": "api",
+          "source": "App/EL.App.API (shared slot)",
+          "proposedIdentity": "id-collab-api-<ring>",
+          "identityType": "SystemAssigned"
+        },
+        {
+          "id": "collab-api-user",
+          "resourceName": "el-<ring>-api-user-<node>",
+          "kind": "api",
+          "source": "Users/EL.Users.API",
+          "proposedIdentity": "id-collab-api-<ring>",
+          "identityType": "SystemAssigned"
+        },
+        {
+          "id": "collab-api-group",
+          "resourceName": "el-<ring>-api-group-<node>",
+          "kind": "api",
+          "source": "Groups/EL.Groups.API",
+          "proposedIdentity": "id-collab-api-<ring>",
+          "identityType": "SystemAssigned"
+        },
+        {
+          "id": "collab-api-spo",
+          "resourceName": "el-<ring>-api-spo-<node>",
+          "kind": "api",
+          "source": "SharePoint/EL.SharePoint.API",
+          "proposedIdentity": "id-collab-api-<ring>",
+          "identityType": "SystemAssigned"
+        },
+        {
+          "id": "collab-api-cockpit",
+          "resourceName": "el-<ring>-api-cockpit-<node>",
+          "kind": "api",
+          "source": "Cockpit/EL.Cockpit.API",
+          "proposedIdentity": "id-collab-cockpit-<ring>",
+          "identityType": "SystemAssigned"
+        },
+        {
+          "id": "collab-api-cockpit-sh",
+          "resourceName": "el-<ring>-api-shared-cockpit-<node>",
+          "kind": "api",
+          "source": "Cockpit/EL.Cockpit.API (shared slot)",
+          "proposedIdentity": "id-collab-cockpit-<ring>",
+          "identityType": "SystemAssigned"
+        },
+        {
+          "id": "collab-eng-provisioning",
+          "resourceName": "el-<ring>-eng-provisioning-<node>",
+          "kind": "engine",
+          "source": "Provisioning/EL.Provisioning.Engine",
+          "proposedIdentity": "id-collab-engine-<ring>",
+          "identityType": "SystemAssigned"
+        },
+        {
+          "id": "collab-eng-spo",
+          "resourceName": "el-<ring>-eng-spo-<node>",
+          "kind": "engine",
+          "source": "SharePoint/EL.SharePoint.Engine",
+          "proposedIdentity": "id-collab-engine-<ring>",
+          "identityType": "SystemAssigned"
+        },
+        {
+          "id": "collab-eng-group",
+          "resourceName": "el-<ring>-eng-group-<node>",
+          "kind": "engine",
+          "source": "Groups/EL.Groups.Engine",
+          "proposedIdentity": "id-collab-engine-<ring>",
+          "identityType": "SystemAssigned"
+        },
+        {
+          "id": "collab-eng-user",
+          "resourceName": "el-<ring>-eng-user-<node>",
+          "kind": "engine",
+          "source": "Users/EL.Users.Engine",
+          "proposedIdentity": "id-collab-engine-<ring>",
+          "identityType": "SystemAssigned"
+        },
+        {
+          "id": "collab-eng-onboarding",
+          "resourceName": "el-<ring>-eng-onboarding-<node>",
+          "kind": "engine",
+          "source": "Core/EL.Core.Engine (onboarding)",
+          "proposedIdentity": "id-collab-engine-<ring>",
+          "identityType": "SystemAssigned"
+        },
+        {
+          "id": "approvals-api",
+          "resourceName": "el-<ring>-api-approval-<node>",
+          "kind": "api",
+          "source": "EasyLife-Approvals/EL.Approvals.API",
+          "proposedIdentity": "id-approvals-api-<ring>",
+          "identityType": "SystemAssigned"
+        },
+        {
+          "id": "approvals-eng",
+          "resourceName": "el-<ring>-eng-approvals-<node>",
+          "kind": "engine",
+          "source": "EasyLife-Approvals/EL.Approvals.Engine",
+          "proposedIdentity": "id-approvals-engine-<ring>",
+          "identityType": "SystemAssigned"
+        },
+        {
+          "id": "collab-api-admin",
+          "resourceName": "el-<ring>-api-admin-<node>",
+          "kind": "api",
+          "source": "Admin/EL.Admin.API",
+          "proposedIdentity": "id-collab-admin-<ring>",
+          "identityType": "SystemAssigned"
+        },
+        {
+          "id": "collab-eng-admin",
+          "resourceName": "el-<ring>-eng-admin-<node>",
+          "kind": "engine",
+          "source": "Admin/EL.Admin.Engine",
+          "proposedIdentity": "id-collab-admin-<ring>",
+          "identityType": "SystemAssigned"
+        }
+      ],
+      "grants": [
+        {
+          "apps": [
+            "collab-api-app",
+            "collab-api-app-shared",
+            "collab-api-user",
+            "collab-api-group",
+            "collab-api-spo"
+          ],
+          "roles": [
+            "StorageAccountContributor",
+            "StorageTableDataContributor"
+          ],
+          "scope": "rg:storage",
+          "source": "backendservices/main.bicep#apiStoragePermissions"
+        },
+        {
+          "apps": [
+            "collab-api-cockpit",
+            "collab-api-cockpit-sh"
+          ],
+          "roles": [
+            "StorageAccountContributor",
+            "StorageTableDataContributor",
+            "StorageBlobDataContributor",
+            "StorageBlobDataOwner"
+          ],
+          "scope": "rg:storage",
+          "source": "backendservices/main.bicep#apiCockpitStoragePermissions"
+        },
+        {
+          "apps": [
+            "collab-eng-provisioning",
+            "collab-eng-spo",
+            "collab-eng-group",
+            "collab-eng-user",
+            "collab-eng-onboarding"
+          ],
+          "roles": [
+            "StorageAccountContributor",
+            "StorageTableDataContributor"
+          ],
+          "scope": "rg:storage",
+          "source": "backendservices/main.bicep#engineStoragePermissions"
+        },
+        {
+          "apps": [
+            "collab-eng-provisioning",
+            "collab-eng-spo",
+            "collab-eng-group",
+            "collab-eng-user",
+            "collab-eng-onboarding",
+            "collab-api-app",
+            "collab-api-app-shared",
+            "collab-api-user",
+            "collab-api-group",
+            "collab-api-spo",
+            "collab-api-cockpit",
+            "collab-api-cockpit-sh"
+          ],
+          "roles": [
+            "StorageAccountContributor",
+            "StorageTableDataContributor"
+          ],
+          "scope": "rg:core-storage",
+          "source": "backendservices/main.bicep#engineApiCoreStoragePermissions"
+        },
+        {
+          "apps": [
+            "collab-api-app",
+            "collab-api-app-shared",
+            "collab-api-user",
+            "collab-api-group",
+            "collab-api-spo",
+            "collab-api-cockpit",
+            "collab-api-cockpit-sh"
+          ],
+          "roles": [
+            "StorageQueueDataContributor",
+            "StorageAccountContributor"
+          ],
+          "scope": "rg:engine-node",
+          "source": "backendservices/main.bicep#engineApiPermissions"
+        },
+        {
+          "apps": [
+            "collab-eng-provisioning",
+            "collab-eng-spo",
+            "collab-eng-group",
+            "collab-eng-user",
+            "collab-eng-onboarding"
+          ],
+          "roles": [
+            "StorageQueueDataContributor",
+            "StorageAccountContributor",
+            "StorageTableDataContributor",
+            "StorageBlobDataContributor",
+            "StorageBlobDataOwner"
+          ],
+          "scope": "rg:engine-node",
+          "source": "backendservices/main.bicep#engineEnginePermissions"
+        },
+        {
+          "apps": [
+            "collab-eng-provisioning",
+            "collab-eng-spo",
+            "collab-eng-group",
+            "collab-eng-user",
+            "collab-eng-onboarding",
+            "collab-api-app",
+            "collab-api-app-shared",
+            "collab-api-user",
+            "collab-api-group",
+            "collab-api-spo",
+            "collab-api-cockpit",
+            "collab-api-cockpit-sh"
+          ],
+          "roles": [
+            "KeyVaultSecretsUser",
+            "KeyVaultCertificatesOfficer"
+          ],
+          "scope": "rg:security",
+          "source": "backendservices/main.bicep#assignKeyVaultPermissionsCore"
+        },
+        {
+          "apps": [
+            "collab-api-cockpit",
+            "collab-api-cockpit-sh"
+          ],
+          "roles": [
+            "KeyVaultSecretsOfficer"
+          ],
+          "scope": "rg:security",
+          "source": "backendservices/main.bicep#assignKeyVaultSecretsUserToCustom"
+        },
+        {
+          "apps": [
+            "approvals-eng"
+          ],
+          "roles": [
+            "StorageAccountContributor",
+            "StorageBlobDataContributor",
+            "StorageBlobDataOwner"
+          ],
+          "scope": "rg:backup",
+          "source": "backendservices/approvals.bicep#adminEngineBackupPermissions"
+        },
+        {
+          "apps": [
+            "approvals-api"
+          ],
+          "roles": [
+            "StorageAccountContributor",
+            "StorageTableDataContributor"
+          ],
+          "scope": "rg:storage",
+          "source": "backendservices/approvals.bicep#apiStoragePermissions"
+        },
+        {
+          "apps": [
+            "approvals-eng"
+          ],
+          "roles": [
+            "StorageAccountContributor",
+            "StorageTableDataContributor"
+          ],
+          "scope": "rg:storage",
+          "source": "backendservices/approvals.bicep#engineStoragePermissions"
+        },
+        {
+          "apps": [
+            "approvals-api",
+            "approvals-eng"
+          ],
+          "roles": [
+            "StorageAccountContributor",
+            "StorageTableDataContributor"
+          ],
+          "scope": "rg:core-storage",
+          "source": "backendservices/approvals.bicep#engineApiCoreStoragePermissions"
+        },
+        {
+          "apps": [
+            "approvals-api"
+          ],
+          "roles": [
+            "StorageQueueDataContributor",
+            "StorageAccountContributor"
+          ],
+          "scope": "rg:engine-node",
+          "source": "backendservices/approvals.bicep#engineApiPermissions"
+        },
+        {
+          "apps": [
+            "approvals-eng"
+          ],
+          "roles": [
+            "StorageQueueDataContributor",
+            "StorageAccountContributor",
+            "StorageTableDataContributor",
+            "StorageBlobDataContributor",
+            "StorageBlobDataOwner"
+          ],
+          "scope": "rg:engine-node",
+          "source": "backendservices/approvals.bicep#engineEnginePermissions"
+        },
+        {
+          "apps": [
+            "approvals-api",
+            "approvals-eng"
+          ],
+          "roles": [
+            "KeyVaultSecretsUser",
+            "KeyVaultCertificatesOfficer"
+          ],
+          "scope": "rg:security",
+          "source": "backendservices/approvals.bicep#assignKeyVaultPermissionsCore"
+        },
+        {
+          "apps": [
+            "collab-api-admin"
+          ],
+          "roles": [
+            "StorageAccountContributor",
+            "StorageTableDataContributor"
+          ],
+          "scope": "rg:storage",
+          "source": "backendservices/adminApiPermissions.bicep#adminApiStoragePermissions"
+        },
+        {
+          "apps": [
+            "collab-api-admin"
+          ],
+          "roles": [
+            "StorageAccountContributor",
+            "StorageTableDataContributor"
+          ],
+          "scope": "rg:core-storage",
+          "source": "backendservices/adminApiPermissions.bicep#adminApiCoreStoragePermissions"
+        },
+        {
+          "apps": [
+            "collab-api-admin"
+          ],
+          "roles": [
+            "StorageQueueDataContributor",
+            "StorageAccountContributor"
+          ],
+          "scope": "rg:engine-node",
+          "source": "backendservices/adminApiPermissions.bicep#adminApiEnginePermissions"
+        },
+        {
+          "apps": [
+            "collab-eng-admin"
+          ],
+          "roles": [
+            "StorageAccountContributor",
+            "StorageTableDataContributor"
+          ],
+          "scope": "rg:storage",
+          "source": "backendservices/adminApiPermissions.bicep#adminEngineStoragePermissions"
+        },
+        {
+          "apps": [
+            "collab-eng-admin"
+          ],
+          "roles": [
+            "StorageAccountContributor",
+            "StorageTableDataContributor"
+          ],
+          "scope": "rg:core-storage",
+          "source": "backendservices/adminApiPermissions.bicep#adminEngineCoreStoragePermissions"
+        },
+        {
+          "apps": [
+            "collab-eng-admin"
+          ],
+          "roles": [
+            "StorageQueueDataContributor",
+            "StorageTableDataContributor",
+            "StorageAccountContributor",
+            "StorageBlobDataContributor",
+            "StorageBlobDataOwner"
+          ],
+          "scope": "rg:engine-node",
+          "source": "backendservices/adminApiPermissions.bicep#adminEnginePermissions"
+        },
+        {
+          "apps": [
+            "collab-eng-admin"
+          ],
+          "roles": [
+            "StorageTableDataContributor",
+            "StorageAccountContributor",
+            "StorageBlobDataContributor",
+            "StorageBlobDataOwner"
+          ],
+          "scope": "rg:backup",
+          "source": "backendservices/adminApiPermissions.bicep#adminEngineBackupPermissions"
+        },
+        {
+          "apps": [
+            "collab-api-admin",
+            "collab-eng-admin"
+          ],
+          "roles": [
+            "KeyVaultSecretsUser",
+            "KeyVaultCertificatesOfficer"
+          ],
+          "scope": "rg:security",
+          "source": "backendservices/admin.bicep#assignKeyVaultPermissionsCore"
+        },
+        {
+          "apps": [
+            "collab-eng-admin"
+          ],
+          "roles": [
+            "ServiceBusDataReceiver"
+          ],
+          "scope": "rg:servicebus",
+          "source": "backendservices/admin.bicep#assignAdminEngineServiceBusReceiverRoles"
+        }
+      ],
+      "appRoles": [
+        {
+          "apps": [
+            "collab-eng-admin"
+          ],
+          "application": "EasyLife 365 Intercommunication[ Dev]",
+          "role": "Subscriptions.Read",
+          "condition": "SUBSCRIPTION_MODE=Centralized",
+          "source": "provision-environment.ps1"
+        }
+      ],
+      "notes": [
+        "EL.Approvals API and Engine are deployed by THIS repository's templates; the EasyLife-Approvals repo contains no infrastructure.",
+        "Static Web Apps (app/cockpit/admin/onboarding clients) carry no managed identity.",
+        "Redis cache is reached with a connection-string secret from Key Vault, not an identity."
+      ]
+    },
+    {
+      "key": "identity",
+      "name": "EasyLife 365 Identity",
+      "repo": "EasyLife365-Identity",
+      "namePrefix": "eid-<ring>",
+      "deploymentScope": "subscription",
+      "nodeModel": "single backend (backend.postfix)",
+      "productionNodes": [
+        {
+          "postfix": "ne",
+          "location": "northeurope"
+        }
+      ],
+      "infrastructure": "_devops/automation/infrastructure/bicep",
+      "scopes": {
+        "rg:core": "rg-eid-<ring>-core",
+        "rg:backup": "rg-eid-<ring>-backup",
+        "account:directory": "shared directory storage account (settings.directory.storageAccountId)",
+        "rg:servicebus": "discovered by tag (central messaging)"
+      },
+      "apps": [
+        {
+          "id": "identity-eng",
+          "resourceName": "eid-<ring>-eng-api-<node>",
+          "kind": "engine",
+          "source": "EL.Identity.Engine (52 HTTP + queue + scheduler functions)",
+          "proposedIdentity": "id-identity-engine-<ring>",
+          "identityType": "SystemAssigned"
+        }
+      ],
+      "grants": [
+        {
+          "apps": [
+            "identity-eng"
+          ],
+          "roles": [
+            "StorageQueueDataContributor",
+            "StorageAccountContributor",
+            "StorageBlobDataOwner",
+            "StorageBlobDataContributor",
+            "StorageTableDataContributor",
+            "KeyVaultSecretsUser",
+            "KeyVaultCertificatesOfficer"
+          ],
+          "scope": "rg:core",
+          "source": "backendservices/main.bicep#assignPermissionsToEngineStorage"
+        },
+        {
+          "apps": [
+            "identity-eng"
+          ],
+          "roles": [
+            "StorageAccountContributor",
+            "StorageBlobDataOwner",
+            "StorageBlobDataContributor"
+          ],
+          "scope": "rg:backup",
+          "source": "main.bicep#assignPermissionsToEngineStorage"
+        },
+        {
+          "apps": [
+            "identity-eng"
+          ],
+          "roles": [
+            "StorageAccountContributor",
+            "StorageTableDataContributor"
+          ],
+          "scope": "account:directory",
+          "source": "main.bicep#assignStorageAccountPermissions (storagePermissionsCore)"
+        },
+        {
+          "apps": [
+            "identity-eng"
+          ],
+          "roles": [
+            "ServiceBusDataReceiver"
+          ],
+          "scope": "rg:servicebus",
+          "source": "main.bicep#assignEngineServiceBusReceiverRole"
+        }
+      ],
+      "appRoles": [
+        {
+          "apps": [
+            "identity-eng"
+          ],
+          "application": "EasyLife 365 Notification <ring>",
+          "role": "Notification.Send.All",
+          "condition": "always",
+          "source": "provision-environment.ps1"
+        },
+        {
+          "apps": [
+            "identity-eng"
+          ],
+          "application": "EasyLife 365 Intercommunication[ Dev]",
+          "role": "Subscriptions.Read",
+          "condition": "SUBSCRIPTION_MODE=Centralized",
+          "source": "provision-environment.ps1"
+        }
+      ],
+      "notes": [
+        "The only product where the grant to the shared directory account is already made at ACCOUNT scope rather than resource-group scope — the pattern to copy.",
+        "Dev ring also grants Notification.Send.All to SP_Integration_IDENTITY_D, which no deployment creates."
+      ]
+    },
+    {
+      "key": "easyhub",
+      "name": "EasyLife 365 EasyHub",
+      "repo": "EasyLife365-EasyHub",
+      "namePrefix": "ehub-<ring>",
+      "deploymentScope": "subscription",
+      "nodeModel": "single backend (backend.postfix)",
+      "productionNodes": [
+        {
+          "postfix": "ne",
+          "location": "northeurope"
+        }
+      ],
+      "infrastructure": "_devops/automation/infrastructure/bicep",
+      "scopes": {
+        "rg:core": "rg-ehub-<ring>-core",
+        "rg:backup": "rg-ehub-<ring>-backup",
+        "rg:servicebus": "discovered by tag (central messaging)"
+      },
+      "apps": [
+        {
+          "id": "easyhub-eng",
+          "resourceName": "ehub-<ring>-eng-api-<node>",
+          "kind": "engine",
+          "source": "EL.EasyHub.Engine (55 HTTP + service + scheduler functions)",
+          "proposedIdentity": "id-easyhub-engine-<ring>",
+          "identityType": "SystemAssigned"
+        }
+      ],
+      "grants": [
+        {
+          "apps": [
+            "easyhub-eng"
+          ],
+          "roles": [
+            "StorageQueueDataContributor",
+            "StorageAccountContributor",
+            "StorageBlobDataOwner",
+            "StorageBlobDataContributor",
+            "StorageTableDataContributor",
+            "KeyVaultSecretsUser",
+            "KeyVaultCertificatesOfficer"
+          ],
+          "scope": "rg:core",
+          "source": "backendservices/main.bicep#assignPermissionsToEngineStorage"
+        },
+        {
+          "apps": [
+            "easyhub-eng"
+          ],
+          "roles": [
+            "StorageAccountContributor",
+            "StorageBlobDataOwner",
+            "StorageBlobDataContributor"
+          ],
+          "scope": "rg:backup",
+          "source": "main.bicep#assignPermissionsToEngineStorage"
+        },
+        {
+          "apps": [
+            "easyhub-eng"
+          ],
+          "roles": [
+            "ServiceBusDataSender"
+          ],
+          "scope": "rg:servicebus",
+          "source": "main.bicep#assignEngineServiceBusSenderRole"
+        },
+        {
+          "apps": [
+            "easyhub-eng"
+          ],
+          "roles": [
+            "CognitiveServicesOpenAIUser"
+          ],
+          "scope": "rg:core",
+          "source": "main.bicep#assignEngineOpenAiUserRole"
+        }
+      ],
+      "appRoles": [
+        {
+          "apps": [
+            "easyhub-eng"
+          ],
+          "application": "EasyLife 365 Notification <ring>",
+          "role": "Notification.Send.All",
+          "condition": "always",
+          "source": "provision-environment.ps1"
+        }
+      ],
+      "notes": [
+        "The only Service Bus SENDER in the platform: EasyHub publishes subscription changes, the products receive them.",
+        "Also the only holder of Cognitive Services OpenAI User (AI Foundry news / feature-request / initiative assistants).",
+        "backendservices/common/storagePermissionsCore.bicep exists here but is never invoked — dead template."
+      ]
+    },
+    {
+      "key": "exchange",
+      "name": "EasyLife 365 Mail (Exchange)",
+      "repo": "EasyLife365-Exchange",
+      "namePrefix": "ele-<ring>",
+      "deploymentScope": "subscription",
+      "nodeModel": "nodes[] (per-region)",
+      "productionNodes": [
+        {
+          "postfix": "we",
+          "location": "westeurope"
+        }
+      ],
+      "infrastructure": "_devops/automation/infrastructure/bicep",
+      "scopes": {
+        "rg:api-node": "rg-ele-<ring>-<rgname>-api-<node>",
+        "rg:storage": "rg-ele-<ring>-storage",
+        "rg:directory": "shared directory storage resource group (storage.directory)",
+        "rg:security": "rg-ele-<ring>-security",
+        "rg:backup": "rg-ele-<ring>-backup",
+        "rg:approvals-engine": "Approvals engine storage RG (in Collaboration's subscription)",
+        "rg:servicebus": "discovered by tag (central messaging)"
+      },
+      "apps": [
+        {
+          "id": "mail-api-app",
+          "resourceName": "ele-<ring>-api-app-<node>",
+          "kind": "api",
+          "source": "ELE.App.API",
+          "proposedIdentity": "id-mail-api-<ring>",
+          "identityType": "SystemAssigned"
+        },
+        {
+          "id": "mail-api-cockpit",
+          "resourceName": "ele-<ring>-api-cockpit-<node>",
+          "kind": "api",
+          "source": "ELE.Cockpit.API",
+          "proposedIdentity": "id-mail-cockpit-<ring>",
+          "identityType": "SystemAssigned"
+        },
+        {
+          "id": "mail-eng-exo",
+          "resourceName": "ele-<ring>-eng-exo-<node>",
+          "kind": "engine",
+          "source": "ELE.Engine",
+          "proposedIdentity": "id-mail-engine-<ring>",
+          "identityType": "SystemAssigned"
+        }
+      ],
+      "grants": [
+        {
+          "apps": [
+            "mail-api-app",
+            "mail-api-cockpit"
+          ],
+          "roles": [
+            "StorageQueueDataContributor",
+            "StorageAccountContributor"
+          ],
+          "scope": "rg:api-node",
+          "source": "backendservices/main.bicep#apiPermissions"
+        },
+        {
+          "apps": [
+            "mail-api-app",
+            "mail-api-cockpit"
+          ],
+          "roles": [
+            "StorageAccountContributor",
+            "StorageTableDataContributor"
+          ],
+          "scope": "rg:storage",
+          "source": "backendservices/main.bicep#apiStoragePermissions"
+        },
+        {
+          "apps": [
+            "mail-eng-exo"
+          ],
+          "roles": [
+            "StorageAccountContributor",
+            "StorageTableDataContributor"
+          ],
+          "scope": "rg:storage",
+          "source": "backendservices/main.bicep#engineStoragePermissions"
+        },
+        {
+          "apps": [
+            "mail-eng-exo"
+          ],
+          "roles": [
+            "StorageQueueDataContributor",
+            "StorageAccountContributor",
+            "StorageTableDataContributor",
+            "StorageBlobDataContributor",
+            "StorageBlobDataOwner"
+          ],
+          "scope": "rg:api-node",
+          "source": "backendservices/main.bicep#engineEnginePermissions"
+        },
+        {
+          "apps": [
+            "mail-api-app",
+            "mail-api-cockpit",
+            "mail-eng-exo"
+          ],
+          "roles": [
+            "StorageTableDataContributor",
+            "StorageAccountContributor"
+          ],
+          "scope": "rg:directory",
+          "source": "backendservices/main.bicep#apiEngineCorePermissions"
+        },
+        {
+          "apps": [
+            "mail-eng-exo"
+          ],
+          "roles": [
+            "StorageTableDataContributor",
+            "StorageQueueDataContributor",
+            "StorageAccountContributor",
+            "StorageBlobDataContributor",
+            "StorageBlobDataOwner"
+          ],
+          "scope": "rg:backup",
+          "source": "backendservices/main.bicep#apiEngineBackupPermissions"
+        },
+        {
+          "apps": [
+            "mail-api-app",
+            "mail-api-cockpit",
+            "mail-eng-exo"
+          ],
+          "roles": [
+            "KeyVaultSecretsUser",
+            "KeyVaultCertificatesOfficer"
+          ],
+          "scope": "rg:security",
+          "source": "backendservices/main.bicep#assignKeyVaultPermissionsCore"
+        },
+        {
+          "apps": [
+            "mail-eng-exo"
+          ],
+          "roles": [
+            "ServiceBusDataReceiver"
+          ],
+          "scope": "rg:servicebus",
+          "source": "backendservices/main.bicep#assignEngineSbReceiverRole"
+        },
+        {
+          "apps": [
+            "mail-api-app",
+            "mail-api-cockpit"
+          ],
+          "roles": [
+            "StorageQueueDataContributor"
+          ],
+          "scope": "rg:approvals-engine",
+          "source": "backendservices/approvalsPermissions.bicep#approvalStoragePermissions"
+        }
+      ],
+      "appRoles": [
+        {
+          "apps": [
+            "mail-eng-exo",
+            "mail-api-cockpit"
+          ],
+          "application": "EasyLife 365 Notification <ring>",
+          "role": "Notification.Send.All",
+          "condition": "always",
+          "source": "provision-environment.ps1"
+        },
+        {
+          "apps": [
+            "mail-eng-exo",
+            "mail-api-cockpit"
+          ],
+          "application": "EasyLife 365 Intercommunication[ Dev]",
+          "role": "Subscriptions.Read",
+          "condition": "SUBSCRIPTION_MODE=Centralized",
+          "source": "provision-environment.ps1"
+        }
+      ],
+      "notes": [
+        "Everything is prefixed ELE./ele- (EasyLife Exchange); the product is called Mail.",
+        "Engine and APIs share one resource group per node (rg:api-node), so the engine's blob-owner grant also covers the API storage."
+      ]
+    },
+    {
+      "key": "easymeet",
+      "name": "EasyMeet 365",
+      "repo": "EasyMeet365",
+      "namePrefix": "elt-<ring>",
+      "deploymentScope": "subscription",
+      "nodeModel": "single backend, no region postfix",
+      "productionNodes": [
+        {
+          "postfix": "ne",
+          "location": "northeurope"
+        }
+      ],
+      "infrastructure": "_devops/automation/deployment/infrastructure/bicep",
+      "scopes": {
+        "rg:backend": "backend resource group",
+        "rg:security": "security resource group",
+        "rg:storage": "content storage resource group",
+        "rg:backup": "backup resource group"
+      },
+      "apps": [
+        {
+          "id": "meet-eng-api",
+          "resourceName": "elt-<ring>-eng-api",
+          "kind": "engine+api",
+          "source": "ELT.Api.Functions (HttpTriggers + Queues + Scheduler)",
+          "proposedIdentity": "id-meet-api-<ring>",
+          "identityType": "SystemAssigned"
+        }
+      ],
+      "grants": [
+        {
+          "apps": [
+            "meet-eng-api"
+          ],
+          "roles": [
+            "StorageQueueDataContributor",
+            "StorageAccountContributor",
+            "StorageBlobDataOwner",
+            "StorageBlobDataContributor",
+            "StorageTableDataContributor",
+            "KeyVaultSecretsUser",
+            "KeyVaultCertificatesOfficer"
+          ],
+          "scope": "rg:backend",
+          "source": "backend/main.bicep#assignPermissionsToEngineStorage"
+        },
+        {
+          "apps": [
+            "meet-eng-api"
+          ],
+          "roles": [
+            "KeyVaultSecretsUser",
+            "KeyVaultCertificatesOfficer",
+            "KeyVaultCryptoUser"
+          ],
+          "scope": "rg:security",
+          "source": "core/main.bicep#assignKeyVault*"
+        },
+        {
+          "apps": [
+            "meet-eng-api"
+          ],
+          "roles": [
+            "StorageTableDataContributor"
+          ],
+          "scope": "rg:storage",
+          "source": "core/main.bicep#assignApiStorageTableDataContributeRightsToStorageAccounts"
+        },
+        {
+          "apps": [
+            "meet-eng-api"
+          ],
+          "roles": [
+            "StorageBlobDataContributor"
+          ],
+          "scope": "rg:backup",
+          "source": "core/main.bicep#assignApiStorageDataBlobContributorRightsToBackupStorageAccounts"
+        }
+      ],
+      "appRoles": [],
+      "notes": [
+        "Only product holding Key Vault Crypto User — AesOperation encrypts shareable scheduling links.",
+        "No Entra app-role grants and no Service Bus role: not wired into centralized subscriptions.",
+        "Does not use @easylife365/react-auth and uses react-components v1."
+      ]
+    }
+  ],
+  "crossProductGrants": [
+    {
+      "source": "approvals-eng (Collaboration templates)",
+      "target": "Mail content storage RG",
+      "roles": [
+        "StorageTableDataReader"
+      ],
+      "via": "Collaboration backendservices/approvalMailPermissions.bicep#engineMailContentStoragePermissions"
+    },
+    {
+      "source": "approvals-eng (Collaboration templates)",
+      "target": "Mail engine storage RG",
+      "roles": [
+        "StorageQueueDataContributor"
+      ],
+      "via": "Collaboration backendservices/approvalMailPermissions.bicep#engineMailStoragePermissions"
+    },
+    {
+      "source": "mail-api-app, mail-api-cockpit",
+      "target": "Approvals engine storage RG (Collaboration subscription)",
+      "roles": [
+        "StorageQueueDataContributor"
+      ],
+      "via": "Exchange backendservices/approvalsPermissions.bicep#approvalStoragePermissions"
+    },
+    {
+      "source": "identity-eng",
+      "target": "shared directory storage account",
+      "roles": [
+        "StorageAccountContributor",
+        "StorageTableDataContributor"
+      ],
+      "via": "Identity main.bicep#assignStorageAccountPermissions"
+    },
+    {
+      "source": "mail-api-app, mail-api-cockpit, mail-eng-exo",
+      "target": "shared directory storage RG",
+      "roles": [
+        "StorageTableDataContributor",
+        "StorageAccountContributor"
+      ],
+      "via": "Exchange backendservices/main.bicep#apiEngineCorePermissions"
+    },
+    {
+      "source": "easyhub-eng",
+      "target": "central Service Bus namespace",
+      "roles": [
+        "ServiceBusDataSender"
+      ],
+      "via": "EasyHub main.bicep (publisher)"
+    },
+    {
+      "source": "identity-eng, collab-eng-admin, mail-eng-exo",
+      "target": "central Service Bus namespace",
+      "roles": [
+        "ServiceBusDataReceiver"
+      ],
+      "via": "per-product main.bicep (subscribers)"
+    }
+  ],
+  "appRegistrations": [
+    {
+      "name": "EasyLife 365 App (EasyLifeAppAzureAD)",
+      "tenancy": "multi-tenant",
+      "credential": "certificate in Key Vault",
+      "purpose": "customer-tenant Graph access",
+      "usedBy": [
+        "collaboration"
+      ],
+      "canMoveToManagedIdentity": false
+    },
+    {
+      "name": "EasyLife 365 Admin (EasyLifeAdminAzureAD)",
+      "tenancy": "multi-tenant",
+      "credential": "certificate in Key Vault",
+      "purpose": "admin Graph access",
+      "usedBy": [
+        "collaboration"
+      ],
+      "canMoveToManagedIdentity": false
+    },
+    {
+      "name": "EasyLife 365 Edu (EasyLifeEduAzureAD)",
+      "tenancy": "multi-tenant",
+      "credential": "certificate in Key Vault",
+      "purpose": "education tenant Graph access",
+      "usedBy": [
+        "collaboration"
+      ],
+      "canMoveToManagedIdentity": false
+    },
+    {
+      "name": "EasyLife 365 Cockpit / Onboarding (EasyLifeCockpitAzureAD, OnboardingAADSettings)",
+      "tenancy": "multi-tenant",
+      "credential": "certificate in Key Vault",
+      "purpose": "cockpit + onboarding token validation",
+      "usedBy": [
+        "collaboration"
+      ],
+      "canMoveToManagedIdentity": false
+    },
+    {
+      "name": "EntraIdAppSettings / EntraIdAdminSettings",
+      "tenancy": "multi-tenant",
+      "credential": "certificate in Key Vault",
+      "purpose": "customer-tenant Entra management",
+      "usedBy": [
+        "identity"
+      ],
+      "canMoveToManagedIdentity": false
+    },
+    {
+      "name": "EasyHubAADSettings / InterServiceAADSettings",
+      "tenancy": "single-tenant",
+      "credential": "certificate in Key Vault",
+      "purpose": "service-to-service",
+      "usedBy": [
+        "easyhub",
+        "exchange"
+      ],
+      "canMoveToManagedIdentity": true
+    },
+    {
+      "name": "EasyLife 365 Notification Dev/Insiders/Prod",
+      "tenancy": "single-tenant (internal)",
+      "credential": "n/a (resource app)",
+      "purpose": "defines app role Notification.Send.All",
+      "usedBy": [
+        "identity",
+        "easyhub",
+        "exchange"
+      ],
+      "canMoveToManagedIdentity": null
+    },
+    {
+      "name": "EasyLife 365 Intercommunication[ Dev]",
+      "tenancy": "single-tenant (internal)",
+      "credential": "n/a (resource app)",
+      "purpose": "defines app role Subscriptions.Read",
+      "usedBy": [
+        "identity",
+        "collaboration",
+        "exchange"
+      ],
+      "canMoveToManagedIdentity": null
+    },
+    {
+      "name": "EasyHub 365",
+      "tenancy": "multi-tenant",
+      "credential": "n/a (resource app)",
+      "purpose": "customer-facing EasyHub API; deliberately NOT used for internal app roles",
+      "usedBy": [
+        "easyhub"
+      ],
+      "canMoveToManagedIdentity": null
+    },
+    {
+      "name": "EasyLife 365 Group/User Schema Extensions",
+      "tenancy": "single-tenant",
+      "credential": "certificate",
+      "purpose": "directory schema extension owner",
+      "usedBy": [
+        "collaboration"
+      ],
+      "canMoveToManagedIdentity": false
+    },
+    {
+      "name": "EasyLife 365 Mail Dev",
+      "tenancy": "single-tenant (internal)",
+      "credential": "n/a",
+      "purpose": "referenced by scripts",
+      "usedBy": [
+        "exchange"
+      ],
+      "canMoveToManagedIdentity": null
+    }
+  ],
+  "nonWorkloadPrincipals": [
+    {
+      "name": "contributePrincipalIds (deploy service principals, OIDC-federated to GitHub)",
+      "grant": "Contributor at subscription scope",
+      "source": "*/contributepermissions/*.bicep and Identity main.bicep",
+      "note": "RBAC-write and Graph AppRoleAssignment rights are NOT granted in code — they exist out-of-band and must be read from the portal."
+    },
+    {
+      "name": "backup.backupPrincipalIds (operations)",
+      "grant": "StorageAccountContributor + BlobDataOwner + BlobDataContributor on rg:backup",
+      "source": "Identity and EasyHub main.bicep#assignOperationsBackupPrincipalPermissions",
+      "note": "human/automation principals, not workloads"
+    },
+    {
+      "name": "SP_Integration_IDENTITY_D",
+      "grant": "Notification.Send.All app role",
+      "source": "Identity provision-environment.ps1",
+      "note": "federated to the repo's Integration-Dev environment; created by hand, not by any deployment"
+    }
+  ],
+  "gaps": [
+    "The Notification service itself is not in any repository in scope. Its app registrations are referenced by three products, but its own identity and permissions are unenumerated.",
+    "Whatever owns 'EasyLife 365 Group/User Schema Extensions' and 'EasyLife 365 Mail Dev' is likewise outside these repositories.",
+    "The privilege that lets deploy pipelines CREATE role assignments is not in code — only Contributor is. Confirm in the portal which principals hold User Access Administrator / RBAC Administrator.",
+    "Live Azure state is not covered here: orphaned assignments from recreated apps, and any hand-made grants, can only be found by running scripts/identity/Export-AzureRoleAssignments.ps1.",
+    "The CDN storage account keeps allowSharedKeyAccess=true and allowBlobPublicAccess=true (by design); integration-environment storage does too."
+  ],
+  "derived": {
+    "managedIdentitiesPerRing": 22,
+    "managedIdentitiesProduction": 22,
+    "roleAssignmentRowsPerRing": 235,
+    "roleAssignmentRowsPerProduct": {
+      "collaboration": 163,
+      "identity": 13,
+      "easyhub": 12,
+      "exchange": 35,
+      "easymeet": 12
+    },
+    "appsPerProduct": {
+      "collaboration": 16,
+      "identity": 1,
+      "easyhub": 1,
+      "exchange": 3,
+      "easymeet": 1
+    },
+    "distinctRolesInUse": [
+      "CognitiveServicesOpenAIUser",
+      "KeyVaultCertificatesOfficer",
+      "KeyVaultCryptoUser",
+      "KeyVaultSecretsOfficer",
+      "KeyVaultSecretsUser",
+      "ServiceBusDataReceiver",
+      "ServiceBusDataSender",
+      "StorageAccountContributor",
+      "StorageBlobDataContributor",
+      "StorageBlobDataOwner",
+      "StorageQueueDataContributor",
+      "StorageTableDataContributor"
+    ],
+    "appRoleGrants": 8
+  }
+}
