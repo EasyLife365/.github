@@ -2,11 +2,19 @@ name: Security
 
 on:
   pull_request:
+  workflow_dispatch:
+    inputs:
+      full-history:
+        description: Scan the whole history for secrets, not only a pull request's commits
+        type: boolean
+        default: true
   schedule:
     - cron: '17 3 * * 1'
 
 jobs:
   call-security:
-    uses: EasyLife365/.github/.github/workflows/security.yml@main
+    uses: EasyLife365/.github/.github/workflows/security_gate.yml@main
+    with:
+      full-history: ${{ inputs.full-history || false }}
     secrets:
       package-token: ${{ secrets.PACKAGE_TOKEN }}
