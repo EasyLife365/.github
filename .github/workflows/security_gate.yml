@@ -1,0 +1,129 @@
+name: Security gate
+
+# Reusable security gate for every EasyLife 365 repository.
+#
+#   secret scan          a pull request's commits; the whole history on a schedule or a manual
+#                        run with full-history, which is how a secret that predates this
+#                        workflow gets found
+#   .NET dependencies    Critical or High advisories in the solution's package graph
+#   npm dependencies     High or Critical advisories in the yarn workspace
+#
+# Called from each repository's .github/workflows/security.yml. The file name differs from the
+# caller's on purpose: in this repository the two would otherwise collide on one path, and the
+# caller would silently replace the definition every other repository depends on.
+#
+# Caller:
+#
+#   jobs:
+#     call-security:
+#       uses: EasyLife365/.github/.github/workflows/security_gate.yml@main
+#       with:
+#         dotnet-solution: EL.Core.sln
+#       secrets:
+#         package-token: ${{ secrets.PACKAGE_TOKEN }}
+#
+# Stage 0a of the upgrade plan introduces it as a visible check; Stage 2 makes it required.
+
+on:
+  workflow_call:
+    inputs:
+      full-history:
+        description: Scan the whole history for secrets instead of only a pull request's commits. Set by a manual run.
+        required: false
+        type: boolean
+        default: false
+      dotnet-solution:
+        description: Solution to scan for vulnerable packages. Empty skips the .NET job.
+        required: false
+        type: string
+        default: ''
+      dotnet-version:
+        required: false
+        type: string
+        default: '10.x'
+      node:
+        description: Run yarn audit on the repository's yarn workspace.
+        required: false
+        type: boolean
+        default: false
+      node-version:
+        required: false
+        type: string
+        default: '24.x'
+    secrets:
+      package-token:
+        description: GitHub Packages token used to restore private EL.* and @easylife365 packages.
+        required: false
+
+permissions:
+  contents: read
+
+jobs:
+  secret-scan:
+    name: Secret scan
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Scan for secrets
+        uses: trufflesecurity/trufflehog@main
+        with:
+          base: ${{ (github.event_name == 'pull_request' && !inputs.full-history) && github.event.pull_request.base.sha || '' }}
+          head: ${{ (github.event_name == 'pull_request' && !inputs.full-history) && github.event.pull_request.head.sha || '' }}
+          extra_args: --results=verified,unknown
+
+  dotnet-dependencies:
+    name: .NET dependencies
+    if: inputs.dotnet-solution != ''
+    runs-on: ubuntu-latest
+    env:
+      GITHUB_PACKAGE_USER_NAME: github-actions
+      GITHUB_PACKAGE_TOKEN: ${{ secrets.package-token }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: ${{ inputs.dotnet-version }}
+
+      - name: Restore
+        run: dotnet restore "${{ inputs.dotnet-solution }}"
+
+      - name: List vulnerable packages
+        run: |
+          dotnet list "${{ inputs.dotnet-solution }}" package --vulnerable --include-transitive | tee vulnerable.txt
+          if grep -qE '\b(Critical|High)\b' vulnerable.txt; then
+            echo "::error::Critical or High vulnerabilities in the .NET package graph. See the list above."
+            exit 1
+          fi
+
+  node-dependencies:
+    name: npm dependencies
+    if: inputs.node
+    runs-on: ubuntu-latest
+    env:
+      GITHUB_PACKAGE_TOKEN: ${{ secrets.package-token }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ inputs.node-version }}
+          cache: yarn
+
+      - name: Install without running scripts
+        run: yarn install --frozen-lockfile --ignore-scripts
+
+      # yarn v1 returns a bit mask: 1 info, 2 low, 4 moderate, 8 high, 16 critical.
+      - name: Audit
+        run: |
+          set +e
+          yarn audit --level high --groups dependencies
+          code=$?
+          set -e
+          if [ "$code" -ge 8 ]; then
+            echo "::error::High or Critical advisories in the npm dependency graph. See the audit above."
+            exit 1
+          fi
