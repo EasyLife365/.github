@@ -1,0 +1,149 @@
+# The EasyLife 365 review standard, run on the pull request.
+#
+# The judgement half of PR review -- correctness, conformance to THIS repository, reuse,
+# simplification, breaking changes, tests. The facts half is pr_compliance.yml, and the review
+# is told not to restate anything that check already annotated.
+#
+# ADVISORY, NEVER A GATE. It posts comments and stops there:
+#
+#   - It never approves a pull request, and never counts toward the two required human
+#     approvals. contents: read, so it cannot write to the branch either.
+#   - Do not make it a required check. An LLM finding is an opinion worth reading, not a fact,
+#     and a flaky merge gate teaches people to ignore the checks that are not flaky.
+#
+# WHERE THE RULES COME FROM
+#
+# `agents/code-reviewer.agent.md` in .github-private is the single authored copy of the
+# standard. It is generated into each developer's ~/.claude/agents and never committed, so a
+# runner cannot see it -- this workflow exports it instead and appends it to the system prompt.
+# Nothing is duplicated into a product repository, which is the whole design. See
+# docs/agents/pr-review.md in .github-private.
+#
+# The repository under review is checked out too, so Claude Code reads its own CLAUDE.md and
+# AGENTS.md the way it does locally. That is what makes "the repository is authoritative" hold
+# in CI rather than only in principle.
+#
+# Caller:
+#
+#   jobs:
+#     review:
+#       uses: EasyLife365/.github/.github/workflows/pr_code_review.yml@main
+#       secrets: inherit
+
+name: PR code review
+
+on:
+  workflow_call:
+    inputs:
+      model:
+        description: 'Model to review with. Leave empty for the Claude Code default.'
+        required: false
+        type: string
+        default: ''
+      max-turns:
+        description: 'Cap on conversation turns, so a confused run cannot spend without limit.'
+        required: false
+        type: number
+        default: 30
+      review-drafts:
+        description: 'Review draft pull requests too. Off by default -- a draft is not finished.'
+        required: false
+        type: boolean
+        default: false
+      focus:
+        description: 'Optional extra instruction for this repository, appended to the prompt. For a standing rule, change the agent definition instead so every repository gets it.'
+        required: false
+        type: string
+        default: ''
+    secrets:
+      ANTHROPIC_API_KEY:
+        description: 'Organisation-level Claude API key. An API key rather than an OAuth token: a token is tied to the subscription of whoever ran `claude setup-token`.'
+        required: true
+      SECOPS_TOKEN:
+        description: 'Private key of the EasyLife GitHub App, used to read the review standard from .github-private.'
+        required: true
+
+# Read-only on the repository. `pull-requests: write` is what lets the review post comments --
+# it is not permission to approve, which is a separate review event the action does not send.
+permissions:
+  contents: read
+  pull-requests: write
+  issues: read
+  id-token: write
+
+# A rapid series of pushes costs one review, not one per push.
+concurrency:
+  group: pr-code-review-${{ github.repository }}-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  review:
+    name: Code review
+    # `pull_request` (never `pull_request_target`): a fork pull request gets no secrets and no
+    # review, rather than giving a fork's code access to the token.
+    if: >-
+      github.event_name == 'pull_request' &&
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      (inputs.review-drafts || github.event.pull_request.draft == false)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Generate GitHub App token
+        id: app-token
+        uses: actions/create-github-app-token@v1
+        with:
+          app-id: 3361317
+          private-key: ${{ secrets.SECOPS_TOKEN }}
+          owner: ${{ github.repository_owner }}
+          repositories: .github-private
+
+      - name: Checkout the review standard
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ github.repository_owner }}/.github-private
+          token: ${{ steps.app-token.outputs.token }}
+          path: ${{ runner.temp }}/review-standard
+          fetch-depth: 1
+
+      # Fail closed. A review that runs, costs money, and applies none of the standard is worse
+      # than no review, because it reads as a clean pass.
+      - name: Export the review standard
+        shell: pwsh
+        run: |
+          $source = "${{ runner.temp }}/review-standard"
+          $out = "${{ runner.temp }}/review-rules.md"
+
+          & "$source/scripts/agents/Export-ReviewRules.ps1" -OutputPath $out
+
+          if (-not (Test-Path $out)) { throw "Export produced no file at $out." }
+          $size = (Get-Item $out).Length
+          if ($size -lt 2000) { throw "Exported rules are only $size bytes. Refusing to review with a truncated standard." }
+
+          Write-Host "Review standard: $([Math]::Round($size / 1KB, 1)) KB"
+          "REVIEW_RULES=$out" | Out-File -FilePath $env:GITHUB_ENV -Append
+
+      - name: Review
+        uses: anthropics/claude-code-action@v1
+        with:
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          plugin_marketplaces: 'https://github.com/anthropics/claude-code.git'
+          plugins: 'code-review@claude-code-plugins'
+          # `--comment` is what puts the findings on the pull request. Without it they go to the
+          # workflow run log, where nobody reads them.
+          prompt: >-
+            /code-review:code-review --comment
+            ${{ github.repository }}/pull/${{ github.event.pull_request.number }}
+            ${{ inputs.focus }}
+          # --allowedTools has to name the inline-comment tool even though the skill's own
+          # frontmatter does: the action starts that MCP server only when claude_args names it.
+          claude_args: >-
+            --allowedTools "mcp__github_inline_comment__create_inline_comment"
+            --append-system-prompt-file "${{ env.REVIEW_RULES }}"
+            --max-turns ${{ inputs.max-turns }}
+            ${{ inputs.model && format('--model {0}', inputs.model) || '' }}

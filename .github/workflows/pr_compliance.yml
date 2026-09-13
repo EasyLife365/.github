@@ -1,0 +1,154 @@
+# Deterministic pull request checks -- the facts half of PR review.
+#
+# Everything here was an honour-system checkbox in the contributing guide: the issue keyword,
+# secrets hygiene, the React architecture validator. A script settles them with no model
+# involved, no token spend, and no false positives, which is why this one is allowed to be a
+# required check while pr_code_review.yml is not.
+#
+# Every check is individually switchable, because the estate genuinely differs: Collaboration
+# does not use the feature-folder hierarchy, four repositories have no .sln, and EasyMeet 365
+# is on different package versions on purpose. A check that has to be wrong somewhere gets
+# switched off there rather than watered down everywhere.
+#
+# Caller:
+#
+#   jobs:
+#     compliance:
+#       uses: EasyLife365/.github/.github/workflows/pr_compliance.yml@main
+#       with:
+#         solution-file: EL.Core.sln
+#       secrets: inherit
+
+name: PR compliance
+
+on:
+  workflow_call:
+    inputs:
+      solution-file:
+        description: 'Solution file (.sln / .slnx). Set it to check that a new .csproj was added to the solution. Leave empty for repositories without one.'
+        required: false
+        type: string
+        default: ''
+      test-folder-policy:
+        description: 'off (default) or unit-integration. With unit-integration, a new test file must live under Unit/ or Integration/ -- required where PR CI selects unit tests by namespace.'
+        required: false
+        type: string
+        default: 'off'
+      fail-on-branch-name:
+        description: 'Fail instead of warn when the branch does not follow <type>/pr<issue>.'
+        required: false
+        type: boolean
+        default: false
+      strict-package-versions:
+        description: 'Fail instead of warn when the EL.* suite is on mixed versions (NU1605).'
+        required: false
+        type: boolean
+        default: false
+      skip-checks:
+        description: 'Comma-separated check names to skip: pr-title, secrets, react-table, el-package-versions, solution-membership, test-folder, branch-name, restricted-paths.'
+        required: false
+        type: string
+        default: ''
+      react-repo-validate:
+        description: 'Run the React feature-hierarchy validator. Off by default: it applies only to repositories on hierarchy v2, and Collaboration deliberately is not one.'
+        required: false
+        type: boolean
+        default: false
+      react-validate-strict:
+        description: 'Pass -FailOnWarning to the React validator, so missing folders and missing feature index.ts files fail too.'
+        required: false
+        type: boolean
+        default: false
+      node-version:
+        description: 'Node version used to run the compliance script.'
+        required: false
+        type: string
+        default: '24.x'
+    secrets:
+      SECOPS_TOKEN:
+        description: 'Private key of the EasyLife GitHub App, used to read the shared scripts in .github-private for the React validator. Only needed when react-repo-validate is true.'
+        required: false
+
+permissions:
+  contents: read
+
+jobs:
+  compliance:
+    name: Compliance
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      # fetch-depth: 0 so the script can diff against the merge base. A shallow clone has
+      # neither the base commit nor the merge base, and the diff comes back empty -- which
+      # would make every check silently pass.
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ inputs.node-version }}
+
+      # The script lives in this repository, not in the repository under review, so it has to be
+      # checked out separately. `job_workflow_sha` is the commit of THIS reusable workflow, so
+      # the script and the workflow that runs it always come from the same revision -- a caller
+      # pinned to an older ref keeps the behaviour it was reviewed against.
+      - name: Checkout shared scripts
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ github.repository_owner }}/.github
+          ref: ${{ github.job_workflow_sha || 'main' }}
+          path: .easylife-workflows
+          fetch-depth: 1
+
+      - name: Run compliance checks
+        env:
+          INPUT_SOLUTION_FILE: ${{ inputs.solution-file }}
+          INPUT_TEST_FOLDER_POLICY: ${{ inputs.test-folder-policy }}
+          INPUT_FAIL_ON_BRANCH_NAME: ${{ inputs.fail-on-branch-name }}
+          INPUT_STRICT_PACKAGE_VERSIONS: ${{ inputs.strict-package-versions }}
+          INPUT_SKIP_CHECKS: ${{ inputs.skip-checks }}
+        run: node .easylife-workflows/scripts/pr-compliance.mjs
+
+  react-architecture:
+    name: React architecture
+    if: inputs.react-repo-validate
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      # Both checkouts go in subdirectories so the validator's -RepoPath sees only the
+      # repository under review. Checked out at the workspace root, the shared rules would be
+      # inside the tree it walks.
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          path: app
+
+      # The validator is authored once, in .github-private, alongside the architecture rules it
+      # enforces. Same GitHub App that sync-pr-title.yml already uses.
+      - name: Generate GitHub App token
+        id: app-token
+        uses: actions/create-github-app-token@v1
+        with:
+          app-id: 3361317
+          private-key: ${{ secrets.SECOPS_TOKEN }}
+          owner: ${{ github.repository_owner }}
+          repositories: .github-private
+
+      - name: Checkout shared rules
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ github.repository_owner }}/.github-private
+          token: ${{ steps.app-token.outputs.token }}
+          path: shared
+          fetch-depth: 1
+
+      - name: Validate React architecture
+        shell: pwsh
+        run: |
+          $strict = '${{ inputs.react-validate-strict }}' -eq 'true'
+          ./shared/scripts/validate-react-architecture.ps1 -RepoPath ./app -FailOnWarning:$strict
