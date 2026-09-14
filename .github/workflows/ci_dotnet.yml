@@ -77,25 +77,25 @@ on:
         default: 15
 
       azure-login:
-        description: 'Sign in to Azure with OIDC before the test step, so fixtures can resolve @Microsoft.KeyVault(SecretUri=...) references out of their configuration. The CALLING workflow must also grant id-token: write, and azure-client-id / azure-tenant-id / azure-subscription-id must be supplied.'
+        description: 'Sign in to Azure with OIDC before the test step, so fixtures can resolve @Microsoft.KeyVault(SecretUri=...) references out of their configuration. The CALLING workflow must also grant id-token: write. Identity comes from the CI_AADAPPID / TENANTID / SUBSCRIPTIONID variables unless overridden by the inputs below.'
         required: false
         type: boolean
         default: false
 
       azure-client-id:
-        description: 'Entra application (client) id for the OIDC sign-in. Pass ${{ vars.AADAPPID }} from the caller. Required when azure-login is true.'
+        description: 'Override for the Entra application (client) id. Leave empty to use the CI_AADAPPID variable, which resolves against the CALLING repository and so can be set once at organization scope.'
         required: false
         type: string
         default: ''
 
       azure-tenant-id:
-        description: 'Entra tenant id for the OIDC sign-in. Pass ${{ vars.TENANTID }} from the caller. Required when azure-login is true.'
+        description: 'Override for the Entra tenant id. Leave empty to use the TENANTID variable.'
         required: false
         type: string
         default: ''
 
       azure-subscription-id:
-        description: 'Azure subscription id for the OIDC sign-in. Pass ${{ vars.SUBSCRIPTIONID }} from the caller. Required when azure-login is true.'
+        description: 'Override for the Azure subscription id. Leave empty to use the SUBSCRIPTIONID variable.'
         required: false
         type: string
         default: ''
@@ -193,13 +193,15 @@ jobs:
         shell: bash
         run: |
           missing=""
-          if [ -z "${{ inputs.azure-client-id }}" ]; then missing="$missing azure-client-id"; fi
-          if [ -z "${{ inputs.azure-tenant-id }}" ]; then missing="$missing azure-tenant-id"; fi
-          if [ -z "${{ inputs.azure-subscription-id }}" ]; then missing="$missing azure-subscription-id"; fi
+          if [ -z "${{ inputs.azure-client-id || vars.CI_AADAPPID }}" ]; then missing="$missing CI_AADAPPID"; fi
+          if [ -z "${{ inputs.azure-tenant-id || vars.TENANTID }}" ]; then missing="$missing TENANTID"; fi
+          if [ -z "${{ inputs.azure-subscription-id || vars.SUBSCRIPTIONID }}" ]; then missing="$missing SUBSCRIPTIONID"; fi
           if [ -n "$missing" ]; then
-            echo "::error::azure-login is true but these inputs are empty:$missing."
-            echo "::error::Pass them from the caller, e.g. azure-client-id: \${{ vars.AADAPPID }}."
-            echo "::error::An empty value usually means the variable is scoped to a GitHub environment the test job does not use; define it at repository scope instead."
+            echo "::error::azure-login is true but these are empty:$missing."
+            echo "::error::Set them once as ORGANIZATION variables and scope them to this repository."
+            echo "::error::A variable scoped to a GitHub environment does not resolve here: the test job"
+            echo "::error::deliberately joins no environment, so that pull requests are not gated by"
+            echo "::error::deployment protection rules. Organization or repository scope, not environment."
             exit 1
           fi
 
@@ -207,9 +209,11 @@ jobs:
         if: ${{ inputs.azure-login && inputs.run-tests }}
         uses: azure/login@v2
         with:
-          client-id: ${{ inputs.azure-client-id }}
-          tenant-id: ${{ inputs.azure-tenant-id }}
-          subscription-id: ${{ inputs.azure-subscription-id }}
+          # vars resolves against the CALLING repository, so one organization variable
+          # serves every caller and no identity is repeated per repository.
+          client-id: ${{ inputs.azure-client-id || vars.CI_AADAPPID }}
+          tenant-id: ${{ inputs.azure-tenant-id || vars.TENANTID }}
+          subscription-id: ${{ inputs.azure-subscription-id || vars.SUBSCRIPTIONID }}
 
       - name: Test
         if: ${{ inputs.run-tests }}
