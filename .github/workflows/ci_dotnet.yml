@@ -104,12 +104,27 @@ on:
       PACKAGE-TOKEN:
         required: true
 
+# EVERY CALLER MUST GRANT ALL FOUR OF THESE, or none at all.
+#
+# A reusable workflow's permissions block is a REQUEST, not a ceiling. The caller's own block caps
+# it, and anything the caller does not list becomes "none" -- at which point GitHub refuses the run
+# at startup, before a single job begins:
+#
+#   The workflow is requesting 'id-token: write', but is only allowed 'id-token: none'.
+#
+# A caller with no permissions block at all is fine: it inherits the repository default and this
+# block is satisfied. The trap is a caller with a PARTIAL block, which is strictly worse than none.
+# Adding id-token here broke EasyLife365-Core, whose block listed the other three; adding a block
+# with only contents and id-token broke Collaboration's and Exchange's integration workflows, whose
+# TRX publish step needs checks and pull-requests.
+#
+# checks and pull-requests: the publish-unit-test-result-action step.
+# id-token: the Azure sign-in below, when azure-login is true. Granting it is inert at run time
+# while azure-login is off -- no step mints a token -- but it is NOT optional at startup.
 permissions:
   checks: write
   contents: read
   pull-requests: write
-  # Ceiling only. A caller that does not grant id-token: write cannot mint a token,
-  # so this is inert for every repository that leaves azure-login off.
   id-token: write
 
 jobs:
