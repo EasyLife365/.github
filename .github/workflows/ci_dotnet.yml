@@ -95,7 +95,7 @@ on:
         default: ''
 
       azure-subscription-id:
-        description: 'Override for the Azure subscription id. Leave empty to use the SUBSCRIPTIONID variable.'
+        description: 'Optional. Override for the Azure subscription id. Leave empty to use the SUBSCRIPTIONID variable, or leave both empty: Key Vault data-plane calls are not subscription-scoped, and the sign-in then runs with allow-no-subscriptions.'
         required: false
         type: string
         default: ''
@@ -195,7 +195,6 @@ jobs:
           missing=""
           if [ -z "${{ inputs.azure-client-id || vars.CI_AADAPPID }}" ]; then missing="$missing CI_AADAPPID"; fi
           if [ -z "${{ inputs.azure-tenant-id || vars.TENANTID }}" ]; then missing="$missing TENANTID"; fi
-          if [ -z "${{ inputs.azure-subscription-id || vars.SUBSCRIPTIONID }}" ]; then missing="$missing SUBSCRIPTIONID"; fi
           if [ -n "$missing" ]; then
             echo "::error::azure-login is true but these are empty:$missing."
             echo "::error::Set them once as ORGANIZATION variables and scope them to this repository."
@@ -203,6 +202,11 @@ jobs:
             echo "::error::deliberately joins no environment, so that pull requests are not gated by"
             echo "::error::deployment protection rules. Organization or repository scope, not environment."
             exit 1
+          fi
+          if [ -z "${{ inputs.azure-subscription-id || vars.SUBSCRIPTIONID }}" ]; then
+            echo "No subscription id configured; signing in with allow-no-subscriptions."
+            echo "That is expected: Key Vault data-plane calls are not subscription-scoped, and"
+            echo "the Key Vault roles carry only dataActions, so this principal may see none."
           fi
 
       - name: Azure login
@@ -214,6 +218,9 @@ jobs:
           client-id: ${{ inputs.azure-client-id || vars.CI_AADAPPID }}
           tenant-id: ${{ inputs.azure-tenant-id || vars.TENANTID }}
           subscription-id: ${{ inputs.azure-subscription-id || vars.SUBSCRIPTIONID }}
+          # Without this, az login fails when the principal can enumerate no subscription --
+          # which is the normal case here, since the Key Vault roles grant dataActions only.
+          allow-no-subscriptions: ${{ (inputs.azure-subscription-id || vars.SUBSCRIPTIONID) == '' }}
 
       - name: Test
         if: ${{ inputs.run-tests }}
