@@ -76,6 +76,30 @@ on:
         type: number
         default: 15
 
+      azure-login:
+        description: 'Sign in to Azure with OIDC before the test step, so fixtures can resolve @Microsoft.KeyVault(SecretUri=...) references out of their configuration. The CALLING workflow must also grant id-token: write, and azure-client-id / azure-tenant-id / azure-subscription-id must be supplied.'
+        required: false
+        type: boolean
+        default: false
+
+      azure-client-id:
+        description: 'Entra application (client) id for the OIDC sign-in. Pass ${{ vars.AADAPPID }} from the caller. Required when azure-login is true.'
+        required: false
+        type: string
+        default: ''
+
+      azure-tenant-id:
+        description: 'Entra tenant id for the OIDC sign-in. Pass ${{ vars.TENANTID }} from the caller. Required when azure-login is true.'
+        required: false
+        type: string
+        default: ''
+
+      azure-subscription-id:
+        description: 'Azure subscription id for the OIDC sign-in. Pass ${{ vars.SUBSCRIPTIONID }} from the caller. Required when azure-login is true.'
+        required: false
+        type: string
+        default: ''
+
     secrets:
       PACKAGE-TOKEN:
         required: true
@@ -84,6 +108,9 @@ permissions:
   checks: write
   contents: read
   pull-requests: write
+  # Ceiling only. A caller that does not grant id-token: write cannot mint a token,
+  # so this is inert for every repository that leaves azure-login off.
+  id-token: write
 
 jobs:
   run-tests:
@@ -160,6 +187,29 @@ jobs:
         if: ${{ inputs.use-azurite && inputs.run-tests }}
         shell: bash
         run: azurite --skipApiVersionCheck &
+
+      - name: Check Azure sign-in inputs
+        if: ${{ inputs.azure-login && inputs.run-tests }}
+        shell: bash
+        run: |
+          missing=""
+          if [ -z "${{ inputs.azure-client-id }}" ]; then missing="$missing azure-client-id"; fi
+          if [ -z "${{ inputs.azure-tenant-id }}" ]; then missing="$missing azure-tenant-id"; fi
+          if [ -z "${{ inputs.azure-subscription-id }}" ]; then missing="$missing azure-subscription-id"; fi
+          if [ -n "$missing" ]; then
+            echo "::error::azure-login is true but these inputs are empty:$missing."
+            echo "::error::Pass them from the caller, e.g. azure-client-id: \${{ vars.AADAPPID }}."
+            echo "::error::An empty value usually means the variable is scoped to a GitHub environment the test job does not use; define it at repository scope instead."
+            exit 1
+          fi
+
+      - name: Azure login
+        if: ${{ inputs.azure-login && inputs.run-tests }}
+        uses: azure/login@v2
+        with:
+          client-id: ${{ inputs.azure-client-id }}
+          tenant-id: ${{ inputs.azure-tenant-id }}
+          subscription-id: ${{ inputs.azure-subscription-id }}
 
       - name: Test
         if: ${{ inputs.run-tests }}
