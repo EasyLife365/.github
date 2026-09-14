@@ -76,6 +76,30 @@ on:
         type: number
         default: 15
 
+      azure-login:
+        description: 'Sign in to Azure with OIDC before the test step, so fixtures can resolve @Microsoft.KeyVault(SecretUri=...) references out of their configuration. The CALLING workflow must also grant id-token: write. Identity comes from the CI_AADAPPID / TENANTID / SUBSCRIPTIONID variables unless overridden by the inputs below.'
+        required: false
+        type: boolean
+        default: false
+
+      azure-client-id:
+        description: 'Override for the Entra application (client) id. Leave empty to use the CI_AADAPPID variable, which resolves against the CALLING repository and so can be set once at organization scope.'
+        required: false
+        type: string
+        default: ''
+
+      azure-tenant-id:
+        description: 'Override for the Entra tenant id. Leave empty to use the TENANTID variable.'
+        required: false
+        type: string
+        default: ''
+
+      azure-subscription-id:
+        description: 'Optional. Override for the Azure subscription id. Leave empty to use the SUBSCRIPTIONID variable, or leave both empty: Key Vault data-plane calls are not subscription-scoped, and the sign-in then runs with allow-no-subscriptions.'
+        required: false
+        type: string
+        default: ''
+
     secrets:
       PACKAGE-TOKEN:
         required: true
@@ -84,6 +108,9 @@ permissions:
   checks: write
   contents: read
   pull-requests: write
+  # Ceiling only. A caller that does not grant id-token: write cannot mint a token,
+  # so this is inert for every repository that leaves azure-login off.
+  id-token: write
 
 jobs:
   run-tests:
@@ -160,6 +187,40 @@ jobs:
         if: ${{ inputs.use-azurite && inputs.run-tests }}
         shell: bash
         run: azurite --skipApiVersionCheck &
+
+      - name: Check Azure sign-in inputs
+        if: ${{ inputs.azure-login && inputs.run-tests }}
+        shell: bash
+        run: |
+          missing=""
+          if [ -z "${{ inputs.azure-client-id || vars.CI_AADAPPID }}" ]; then missing="$missing CI_AADAPPID"; fi
+          if [ -z "${{ inputs.azure-tenant-id || vars.TENANTID }}" ]; then missing="$missing TENANTID"; fi
+          if [ -n "$missing" ]; then
+            echo "::error::azure-login is true but these are empty:$missing."
+            echo "::error::Set them once as ORGANIZATION variables and scope them to this repository."
+            echo "::error::A variable scoped to a GitHub environment does not resolve here: the test job"
+            echo "::error::deliberately joins no environment, so that pull requests are not gated by"
+            echo "::error::deployment protection rules. Organization or repository scope, not environment."
+            exit 1
+          fi
+          if [ -z "${{ inputs.azure-subscription-id || vars.SUBSCRIPTIONID }}" ]; then
+            echo "No subscription id configured; signing in with allow-no-subscriptions."
+            echo "That is expected: Key Vault data-plane calls are not subscription-scoped, and"
+            echo "the Key Vault roles carry only dataActions, so this principal may see none."
+          fi
+
+      - name: Azure login
+        if: ${{ inputs.azure-login && inputs.run-tests }}
+        uses: azure/login@v2
+        with:
+          # vars resolves against the CALLING repository, so one organization variable
+          # serves every caller and no identity is repeated per repository.
+          client-id: ${{ inputs.azure-client-id || vars.CI_AADAPPID }}
+          tenant-id: ${{ inputs.azure-tenant-id || vars.TENANTID }}
+          subscription-id: ${{ inputs.azure-subscription-id || vars.SUBSCRIPTIONID }}
+          # Without this, az login fails when the principal can enumerate no subscription --
+          # which is the normal case here, since the Key Vault roles grant dataActions only.
+          allow-no-subscriptions: ${{ (inputs.azure-subscription-id || vars.SUBSCRIPTIONID) == '' }}
 
       - name: Test
         if: ${{ inputs.run-tests }}
