@@ -129,7 +129,12 @@ jobs:
           path: app
 
       # The validator is authored once, in .github-private, alongside the architecture rules it
-      # enforces. Same GitHub App that sync-pr-title.yml already uses.
+      # enforces, so this step needs a token that can read that repository.
+      #
+      # NOTE: SECOPS_TOKEN was deleted when sync-pr-title.yml was removed. This step will fail
+      # with "Input required and not supplied: private-key" until the secret is restored or
+      # this is switched to another way of reaching .github-private. No repository calls this
+      # workflow yet, so nothing is currently broken by it.
       - name: Generate GitHub App token
         id: app-token
         uses: actions/create-github-app-token@v1

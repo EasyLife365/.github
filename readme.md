@@ -20,7 +20,6 @@ Every repository calls these rather than copying the steps, so a fix lands once.
 | `release_nuget_packages.yml` | Publish NuGet packages |
 | `create_maintenance_branch.yml` | Cut a maintenance branch |
 | `azure-storage-sync.yml` | Sync blob storage between rings |
-| `sync-pr-title.yml` | Rewrite a pull request title to carry its linked issues |
 | **`pr_compliance.yml`** | **Deterministic pull request checks — the facts** |
 | **`pr_code_review.yml`** | **The EasyLife 365 review standard, run on the pull request — the judgement** |
 

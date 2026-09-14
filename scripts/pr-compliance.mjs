@@ -131,10 +131,13 @@ console.log('');
 // ---------------------------------------------------------------------------------------------
 // 1. Issue keyword
 //
-// The body is the hard requirement: GitHub links on the body, and sync-pr-title.yml reads the
-// body's linked issues to correct the title. So a missing keyword in the title is a warning --
-// that workflow is about to fix it -- while a missing keyword in the body is a failure, because
-// nothing can recover it and the traceability record is lost.
+// The body is the hard requirement: GitHub links on the body, so a missing keyword there is a
+// failure -- nothing can recover it and the traceability record is lost.
+//
+// A missing keyword in the title stays a warning. It used to be one because sync-pr-title.yml
+// was about to append it; that workflow is gone, so the title is now written by hand. The
+// warning is kept rather than promoted to a failure because that is a policy decision, not a
+// consequence of removing the automation. Promote it if titles start drifting.
 
 const KEYWORD_IN_BODY = /\b(Closes|Fixes|Associates|Resolves)\s+(?:[\w.-]+\/[\w.-]+)?#\d+/i;
 const KEYWORD_SUFFIX = /\.\s*(Closes|Fixes|Associates)\s+#\d+\.?\s*$/;
@@ -144,15 +147,14 @@ if (enabled('pr-title')) {
     fail(
       'pr-title',
       'The pull request body has no issue keyword. Add "Closes #<n>", "Fixes #<n>" for a bug, ' +
-        'or "Associates #<n>" when the work does not fully resolve the issue. GitHub links on ' +
-        'the body, and sync-pr-title reads it to correct the title.',
+        'or "Associates #<n>" when the work does not fully resolve the issue. GitHub links the ' +
+        'issue from the body, which is what makes the pull request traceable.',
     );
   } else if (!KEYWORD_SUFFIX.test(title)) {
     warn(
       'pr-title',
       `The title does not end with the keyword and issue number: "${title}". ` +
-        'sync-pr-title should correct this automatically; if it has not, the expected form is ' +
-        '"<statement>. Closes #<n>".',
+        'The expected form is "<statement>. Closes #<n>".',
     );
   }
 }
