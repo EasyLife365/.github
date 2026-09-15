@@ -1,0 +1,12 @@
+name: PR Review
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+
+jobs:
+  compliance:
+    permissions:
+      contents: read
+    uses: EasyLife365/.github/.github/workflows/pr_compliance.yml@main
+    secrets: inherit
