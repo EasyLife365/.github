@@ -13,11 +13,13 @@
 #
 # WHERE THE RULES COME FROM
 #
-# `agents/code-reviewer.agent.md` in .github-private is the single authored copy of the
-# standard. It is generated into each developer's ~/.claude/agents and never committed, so a
-# runner cannot see it -- this workflow exports it instead and appends it to the system prompt.
-# Nothing is duplicated into a product repository, which is the whole design. See
-# docs/agents/pr-review.md in .github-private.
+# `agents/code-reviewer.md` in .github-private is the single authored copy of the standard,
+# committed directly and shipped by the easylife-agents Claude Code plugin -- a developer's
+# machine reads it the moment that plugin is installed. This workflow runs Anthropic's own
+# code-review skill instead of installing easylife-agents directly, so it still exports the
+# EasyLife-specific standard and appends it to the system prompt. Nothing is duplicated into
+# a product repository, which is the whole design. See docs/agents/pr-review.md in
+# .github-private.
 #
 # The repository under review is checked out too, so Claude Code reads its own CLAUDE.md and
 # AGENTS.md the way it does locally. That is what makes "the repository is authoritative" hold
