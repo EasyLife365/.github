@@ -39,6 +39,8 @@
 //
 // Configuration arrives as environment variables from .github/workflows/pr_agent_review.yml.
 
+import { appendFileSync } from 'node:fs';
+
 const env = process.env;
 
 const cfg = {
@@ -107,6 +109,43 @@ async function postStatus(sha, state, description) {
   if (!response.ok) {
     console.error(`::error::Could not post the commit status: ${response.status} ${await response.text()}`);
     process.exit(1);
+  }
+  writeJobSummary(sha, state, description);
+}
+
+
+// Puts the check's ANSWER on the run page, not just the fact that it ran.
+//
+// This job goes green whenever it managed to post a status, whatever that status says -- which is
+// deliberate, and the reason is at the top of this file. The cost is that the Checks list shows a
+// green "Agent review" beside a red `agent-review` status, and those two mean different things.
+// Someone reading the Checks tab to judge whether a pull request is healthy can reasonably take
+// the green tick as the answer. That has already happened to a careful reader.
+//
+// The job summary is one click from the tick, so putting the verdict there closes the gap without
+// touching the exit-code behaviour that the duplicate-check-run problem depends on.
+function writeJobSummary(sha, state, description) {
+  const summaryPath = env.GITHUB_STEP_SUMMARY;
+  if (!summaryPath) return;
+
+  const verdict = state === 'success' ? 'PASS' : 'FAIL';
+  const body = [
+    `### \`${cfg.statusContext}\`: ${verdict}`,
+    '',
+    description,
+    '',
+    `Commit status \`${cfg.statusContext}\` is \`${state}\` on \`${sha}\`.`,
+    '',
+    '> This job is green whenever it succeeded in posting that status. The line above is the',
+    "> check's answer; this job's own colour is not.",
+    '',
+  ].join('\n');
+
+  try {
+    appendFileSync(summaryPath, body + '\n');
+  } catch (error) {
+    // Never fail the job over a summary. The status is the contract; this is presentation.
+    console.warn(`::warning::Could not write the job summary: ${error.message}`);
   }
 }
 
@@ -225,9 +264,22 @@ if (matched.length > 0) {
 // A review of an older commit is the interesting failure, and it gets its own message: the
 // author did the right thing and then pushed, which reads very differently from never having
 // reviewed at all.
+// A reviewer requested with NO review behind it at all is the ordering mistake the pull request
+// rules exist to prevent, and it reads very differently from simply not having got to it yet.
+//
+// Both halves are needed. requested_reviewers holds only reviewers who have not yet submitted -- a
+// human is removed from it the moment they review -- so on its own it would call a pull request
+// with one approval in and a second reviewer pending "requested before any review", which is
+// false. Teams live in a separate field, and a CODEOWNERS repository requests those instead.
+const reviewersRequested =
+  (pull.requested_reviewers || []).length > 0 || (pull.requested_teams || []).length > 0;
+const nobodyHasReviewed = reviews.length === 0;
+
 const description = stale.length > 0
   ? `Review is for an older commit - re-run /el-review on ${headSha.slice(0, 7)}`
-  : `No agent review for ${headSha.slice(0, 7)} - run /el-review`;
+  : reviewersRequested && nobodyHasReviewed
+    ? `Reviewer requested before any review - run /el-review on ${headSha.slice(0, 7)}`
+    : `No agent review for ${headSha.slice(0, 7)} - run /el-review`;
 
 await postStatus(headSha, 'failure', description);
 
