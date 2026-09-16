@@ -57,6 +57,13 @@ runs it sees a full set of findings and reasonably believes they have reviewed t
 while the pull request itself receives nothing and stays red. That is why ours carries the `el-`
 prefix rather than sitting next to it as `review`.
 
+**Read the status, not the job.** The `agent-review-check` job goes green whenever it posted a
+status; the answer is in the `agent-review` **status** itself. A check run is never retracted, so
+once a review lands the review-triggered run adds a second check run of the same name — you will
+see two `agent-review-check / Agent review` entries on a pull request that went red then green.
+That is the lifecycle showing its history, not a failure. The job only fails when it could not
+post a status at all.
+
 **A green `agent-review` is not an agent sign-off.** It means a review exists for this commit,
 not that the review was favourable. The findings are in the review; the human approval is the
 gate.

@@ -13,6 +13,24 @@
 // code pushed afterwards. Without that binding you can review once, push anything, and merge
 // -- which is a formality wearing a gate's clothes.
 //
+// WHAT THIS SCRIPT'S EXIT CODE MEANS
+//
+// It reports whether the CHECK RAN, not what the check FOUND. Those are different questions and
+// conflating them is a bug this script used to have.
+//
+// The finding lives in the commit status: red when no review exists for the head commit, green
+// when one does. The status is the required context, so the gate is unaffected by the exit code.
+//
+// Exiting non-zero on "no review yet" made the job itself red -- and a check run is never
+// retracted, so the later review-triggered run added a SECOND check run of the same name while
+// the first stayed red forever. Every pull request ended up displaying a permanently failing
+// check beside an identically named passing one, which is misleading in the one place people
+// look to decide whether a pull request is healthy.
+//
+// So: exit 0 whenever the status was posted, whatever it says. Exit non-zero only when the
+// script could not do its job -- missing configuration, an unreachable API, a status that would
+// not post.
+//
 // It posts an explicit commit status rather than relying on the workflow's own check run.
 // A run triggered by pull_request_review does not reliably attach its check to the pull
 // request's head SHA, so a required check that depended on that association would pass or
@@ -174,20 +192,25 @@ const description = stale.length > 0
 
 await postStatus(headSha, 'failure', description);
 
-console.error(`::error::${description}`);
+// A warning, not an error: the job did what it was asked to do. The red lives in the commit
+// status, where it belongs and where the ruleset reads it.
+console.warn(`::warning::${description}`);
 if (stale.length > 0) {
-  console.error(`::error::Found ${stale.length} review marker(s), none matching the head commit ${headSha}.`);
+  console.warn(`::warning::Found ${stale.length} review marker(s), none matching the head commit ${headSha}.`);
   for (const item of stale) {
-    console.error(`  - ${item.sha} by ${item.by || 'unknown'} at ${item.at || 'unknown time'}`);
+    console.warn(`  - ${item.sha} by ${item.by || 'unknown'} at ${item.at || 'unknown time'}`);
   }
 }
-console.error('');
-console.error('The approver of record runs /el-review in their own session before approving.');
-console.error('');
-console.error('NOT /code-review. That is Anthropic\'s built-in skill: it prints findings in the');
-console.error('terminal, posts nothing to the pull request unless given --comment, and never');
-console.error('writes the marker this check reads -- so it leaves this red however good its');
-console.error('findings were.');
-console.error('It posts the findings and records a marker naming the commit it reviewed.');
+console.warn('');
+console.warn('The approver of record runs /el-review in their own session before approving.');
+console.warn('');
+console.warn('NOT /code-review. That is Anthropic\'s built-in skill: it prints findings in the');
+console.warn('terminal, posts nothing to the pull request unless given --comment, and never');
+console.warn('writes the marker this check reads -- so it leaves this red however good its');
+console.warn('findings were.');
+console.warn('');
+console.warn('/el-review posts the findings and records a marker naming the commit it reviewed.');
 
-process.exit(1);
+// Exit 0: the status was posted and it is accurate. The pull request is gated by that status,
+// not by this job's colour -- see the note at the top of this file.
+process.exit(0);

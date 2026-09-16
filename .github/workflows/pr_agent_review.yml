@@ -48,6 +48,20 @@
 # what makes pull_request_target dangerous, and it would make this workflow dangerous in
 # exactly the same way. The only checkout below targets <owner>/.github on purpose.
 #
+# THE JOB'S COLOUR IS NOT THE CHECK'S ANSWER
+#
+# This job goes green whenever it managed to post a status, whatever that status says. The
+# finding is in the status: red when no review exists for the head commit, green when one does.
+#
+# That split matters because a check run is never retracted. When the review lands, the
+# pull_request_review run adds a SECOND check run of the same name -- so if the first run had
+# failed on "no review yet", every pull request would permanently display a failing check beside
+# an identically named passing one. Misleading, in the one place people look to judge whether a
+# pull request is healthy.
+#
+# So the job fails only when it genuinely could not do its work: missing configuration, an
+# unreachable API, a status that would not post.
+
 # The ruleset requires the STATUS CONTEXT (`agent-review` by default), not this workflow's own
 # check run. A run triggered by pull_request_review does not reliably attach its check to the
 # pull request's head SHA, so a required check depending on that association would pass or fail
