@@ -282,12 +282,17 @@ jobs:
             echo ""
 
             for PROJECT in "${TEST_PROJECTS[@]}"; do
-              echo "============================================"
-              echo "Testing: $PROJECT"
-              echo "============================================"
-              output=$(dotnet test "$PROJECT" --no-restore --verbosity normal "${LOGGER_ARGS[@]}" "${FILTER_ARGS[@]}" 2>&1)
-              exit_code=$?
-              echo "$output"
+              echo "::group::Testing $PROJECT"
+              # tee, rather than output=$(...) echoed afterwards. Capturing the whole run means no
+              # live output, and it arrives as one undifferentiated block that
+              # `gh run view --log-failed` then returns in full, setup noise included. PIPESTATUS
+              # keeps dotnet's exit code rather than tee's.
+              LOG=$(mktemp)
+              dotnet test "$PROJECT" --no-restore --verbosity normal "${LOGGER_ARGS[@]}" "${FILTER_ARGS[@]}" 2>&1 | tee "$LOG"
+              exit_code=${PIPESTATUS[0]}
+              output=$(cat "$LOG")
+              rm -f "$LOG"
+              echo "::endgroup::"
               if [ $exit_code -ne 0 ]; then
                 if [ "$ALLOW_ZERO_TESTS" = "true" ] && is_zero_test_output "$output"; then
                   echo "::warning::Zero tests ran for $PROJECT; continuing."
@@ -304,10 +309,13 @@ jobs:
               exit 1
             fi
           else
-            echo "Testing project: ${{ inputs.project-name }}"
-            output=$(dotnet test "${{ inputs.project-name }}" --no-restore --verbosity normal "${LOGGER_ARGS[@]}" "${FILTER_ARGS[@]}" 2>&1)
-            exit_code=$?
-            echo "$output"
+            echo "::group::Testing ${{ inputs.project-name }}"
+            LOG=$(mktemp)
+            dotnet test "${{ inputs.project-name }}" --no-restore --verbosity normal "${LOGGER_ARGS[@]}" "${FILTER_ARGS[@]}" 2>&1 | tee "$LOG"
+            exit_code=${PIPESTATUS[0]}
+            output=$(cat "$LOG")
+            rm -f "$LOG"
+            echo "::endgroup::"
             if [ $exit_code -ne 0 ]; then
               if [ "$ALLOW_ZERO_TESTS" = "true" ] && is_zero_test_output "$output"; then
                 echo "::warning::Zero tests ran for ${{ inputs.project-name }}; continuing."
@@ -319,12 +327,50 @@ jobs:
           fi
           set -e
 
+      # Runs even when the tests failed -- especially then. Without this the run page says nothing
+      # at all about which test failed, and the only route to the answer is opening the log and
+      # scrolling past restore, build and setup.
+      - name: Checkout shared test summary script
+        if: ${{ always() && inputs.run-tests }}
+        uses: actions/checkout@v4
+        with:
+          repository: EasyLife365/.github
+          ref: main
+          path: .shared-github
+          token: ${{ secrets.GITHUB_PACKAGE_TOKEN || github.token }}
+          sparse-checkout: |
+            scripts/test-summary.mjs
+
+      - name: Summarise test results
+        if: ${{ always() && inputs.run-tests }}
+        shell: bash
+        run: |
+          node .shared-github/scripts/test-summary.mjs ./TestResults \
+            --title "${{ inputs.project-name != '' && inputs.project-name || github.event.repository.name }}"
+
+      # Keep the TRX. It is what makes two runs comparable -- which tests were executed then and
+      # are not now -- and after the run the logs alone cannot answer that.
+      - name: Upload test results
+        if: ${{ always() && inputs.run-tests }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-results-${{ github.job }}-${{ github.run_attempt }}
+          path: TestResults/*.trx
+          retention-days: 14
+          if-no-files-found: ignore
+
+      # Deliberately not gated on use-test-logger. That input turns off *logger arguments* for MTP
+      # runners that reject them; those runners still write TRX, and gating the publish on it left
+      # repositories that set it false -- Mail's live suite among them -- with no check run at all.
+      # if-no-files-found on the action's own `files` glob handles the case where none were written.
       - name: Publish test results
         uses: EnricoMi/publish-unit-test-result-action@v2
-        if: ${{ always() && inputs.run-tests && inputs.use-test-logger }}
+        if: ${{ always() && inputs.run-tests }}
+        continue-on-error: true
         with:
           files: |
             TestResults/*.trx
+          action_fail: false
 
       - name: Upload artifacts
         if: ${{ inputs.upload-artifacts }}
