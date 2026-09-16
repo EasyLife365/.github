@@ -1,0 +1,18 @@
+{
+  "extraKnownMarketplaces": {
+    "easylife365": {
+      "source": {
+        "source": "github",
+        "repo": "EasyLife365/.github-private"
+      }
+    }
+  },
+  "enabledPlugins": {
+    "easylife-agents@easylife365": true
+  },
+  "pluginConfigs": {
+    "easylife-agents@easylife365": {
+      "version": "2.0.3"
+    }
+  }
+}
