@@ -68,9 +68,8 @@ targetScope = 'subscription'
 // team before relying on this deployment for that purpose.
 // ============================================================================
 
-@description('Deployment stage. "p" is the one real deployment every consumer (CI + developers) points at. "d" is an optional sandbox run in a throwaway subscription, useful only for rehearsing this template before it touches the real shared resource — there is no per-ring product traffic behind this account the way there is for a product repo\'s "d"/"i"/"p".')
+@description('Deployment stage. There is only one: this is a single shared resource, not per-ring product infra with its own "d"/"i"/"p" traffic. Kept as a param (rather than a hardcoded "p") only so the resource-naming pattern (elagents-p-...) matches every other repo\'s stage-prefixed naming.')
 @allowed([
-  'd'
   'p'
 ])
 param stage string = 'p'
