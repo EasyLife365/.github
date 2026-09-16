@@ -1,7 +1,7 @@
 param name string
 param location string = resourceGroup().location
 
-@description('Whether the account answers on the public endpoint (Entra ID/RBAC-gated either way). Defaults to true here, unlike EasyHub''s ai/aiServices.bicep (which defaults to false): this account is called from GitHub-hosted Actions runners and from developer laptops, neither of which sits on an EasyLife 365 VNet, so there is no fixed set of subnets to allow instead.')
+@description('Whether the account answers on the public endpoint (Entra ID/RBAC-gated either way). Defaults to true here, unlike EasyHub\'s ai/aiServices.bicep (which defaults to false): this account is called from GitHub-hosted Actions runners and from developer laptops, neither of which sits on an EasyLife 365 VNet, so there is no fixed set of subnets to allow instead.')
 param enablePublicAccess bool = true
 
 @description('Subnet resource IDs allowed to reach the account when enablePublicAccess is false. Each subnet must already carry the Microsoft.CognitiveServices service endpoint.')
