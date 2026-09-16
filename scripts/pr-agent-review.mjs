@@ -3,7 +3,7 @@
 //
 // Verifies that a Claude review exists FOR THE CURRENT HEAD COMMIT. It does not read the
 // review, judge it, or care what it found -- the judgement lives in the review itself, posted
-// by the /review skill in the approver's own session. This only answers "did one happen".
+// by the /el-review skill in the approver's own session. This only answers "did one happen".
 //
 // The approval rule it enforces one half of:
 //
@@ -129,7 +129,7 @@ if (cfg.exemptAuthors.includes(author)) {
   process.exit(0);
 }
 
-// Reviews carry the marker (the /review skill posts through the reviews API). Issue comments
+// Reviews carry the marker (the /el-review skill posts through the reviews API). Issue comments
 // are read too, so a review posted as a plain comment still counts -- the contract is the
 // marker, not the mechanism that delivered it.
 const [reviews, comments] = await Promise.all([
@@ -169,8 +169,8 @@ if (matched.length > 0) {
 // author did the right thing and then pushed, which reads very differently from never having
 // reviewed at all.
 const description = stale.length > 0
-  ? `Review is for an older commit - re-run /review on ${headSha.slice(0, 7)}`
-  : `No agent review for ${headSha.slice(0, 7)} - run /review`;
+  ? `Review is for an older commit - re-run /el-review on ${headSha.slice(0, 7)}`
+  : `No agent review for ${headSha.slice(0, 7)} - run /el-review`;
 
 await postStatus(headSha, 'failure', description);
 
@@ -182,7 +182,12 @@ if (stale.length > 0) {
   }
 }
 console.error('');
-console.error('The approver of record runs /review in their own session before approving.');
+console.error('The approver of record runs /el-review in their own session before approving.');
+console.error('');
+console.error('NOT /code-review. That is Anthropic\'s built-in skill: it prints findings in the');
+console.error('terminal, posts nothing to the pull request unless given --comment, and never');
+console.error('writes the marker this check reads -- so it leaves this red however good its');
+console.error('findings were.');
 console.error('It posts the findings and records a marker naming the commit it reviewed.');
 
 process.exit(1);

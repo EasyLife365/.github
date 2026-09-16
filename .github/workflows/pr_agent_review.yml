@@ -4,7 +4,7 @@
 # The human half is enforced by the branch ruleset. This is the other half.
 #
 # It does not read the review or judge what it found -- the judgement is in the review itself,
-# posted by the /review skill in the approver's own session. This answers only "did one
+# posted by the /el-review skill in the approver's own session. This answers only "did one
 # happen, for this commit".
 #
 # Binding it to the head commit is the whole point. A review of an earlier commit must not

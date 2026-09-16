@@ -40,7 +40,7 @@ flaky merge gate teaches people to ignore the checks that are not flaky.
 
 **`pr_agent_review.yml`** is the third layer and behaves unlike the other two. It does not read
 the diff and forms no opinion. It answers one question: *did a Claude review happen for this
-exact head commit?* The approver of record runs `/review` in their own session; that skill posts
+exact head commit?* The approver of record runs `/el-review` in their own session; that skill posts
 the findings and records a marker naming the commit it reviewed, and this check looks for the
 marker. Binding it to the head commit is the whole point — a review of an earlier commit must
 not satisfy the check for code pushed afterwards, or you review once, push anything, and merge.
@@ -49,6 +49,13 @@ Because it is a fact rather than a judgement, it is safe to require. It enforces
 of the approval rule:
 
 > One human approval plus a passing agent review on every pull request.
+
+**`/el-review` is not `/code-review`.** Anthropic ships a built-in skill called `code-review`.
+It prints findings in the terminal, posts nothing to the pull request unless given `--comment`,
+and never writes the `easylife-review` marker — so it cannot clear this check. A reviewer who
+runs it sees a full set of findings and reasonably believes they have reviewed the pull request,
+while the pull request itself receives nothing and stays red. That is why ours carries the `el-`
+prefix rather than sitting next to it as `review`.
 
 **A green `agent-review` is not an agent sign-off.** It means a review exists for this commit,
 not that the review was favourable. The findings are in the review; the human approval is the
