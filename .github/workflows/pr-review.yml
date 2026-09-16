@@ -20,7 +20,13 @@ name: PR Review
 
 on:
   pull_request:
-    types: [opened, synchronize, reopened, ready_for_review]
+    # `edited` is here because pr-compliance.mjs reads the pull request BODY -- the issue
+    # keyword check is the one that fails most often. Without it, a compliance failure about
+    # the body cannot be cleared by fixing the body: the event never re-fires, and re-running
+    # the job does not help either, because a re-run replays the stored event payload and so
+    # sees the old body. The only remaining ways out are a new commit or close-and-reopen,
+    # both of which are worse than one extra run. Observed on #49.
+    types: [opened, synchronize, reopened, ready_for_review, edited]
   pull_request_review:
     types: [submitted]
 
