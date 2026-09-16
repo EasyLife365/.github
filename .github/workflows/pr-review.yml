@@ -1,12 +1,47 @@
 name: PR Review
 
+# This repository is the pilot caller for pr_agent_review.yml. It is wired here first, on
+# purpose: it is where the workflow itself is authored, so a change to the check and the
+# evidence that it works arrive in the same place.
+#
+# The extra triggers are not decoration:
+#
+#   pull_request_review  -- the agent review is posted AFTER a pull_request-triggered run has
+#                           already finished, and posting a review does not re-fire
+#                           pull_request. Without this, agent-review fails once and never
+#                           re-runs, however many reviews are posted afterwards.
+#
+#   merge_group          -- required before a merge queue can be enabled anywhere. A queued
+#                           merge waits on checks that never run if the workflow does not
+#                           trigger on the merge group, so the queue hangs rather than merges.
+#                           Added now so the trigger is already in place when the queue is
+#                           turned on, rather than discovered by the first stuck merge.
+
 on:
   pull_request:
     types: [opened, synchronize, reopened, ready_for_review]
+  pull_request_review:
+    types: [submitted]
+  merge_group:
 
 jobs:
   compliance:
+    # A review submission does not change the diff, so re-running the deterministic checks on
+    # it would spend minutes to reach the same answer.
+    if: github.event_name != 'pull_request_review'
     permissions:
       contents: read
     uses: EasyLife365/.github/.github/workflows/pr_compliance.yml@main
+    secrets: inherit
+
+  agent-review:
+    # Nothing to review in a merge group: the pull request was reviewed before it was queued.
+    if: github.event_name != 'merge_group'
+    permissions:
+      contents: read
+      pull-requests: read
+      # The check posts an explicit commit status naming the head SHA, rather than relying on
+      # its own check run being associated with the right commit.
+      statuses: write
+    uses: EasyLife365/.github/.github/workflows/pr_agent_review.yml@main
     secrets: inherit
