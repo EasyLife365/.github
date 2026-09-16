@@ -1,12 +1,88 @@
 name: PR Review
 
+# This repository is the pilot caller for pr_agent_review.yml. It is wired here first, on
+# purpose: it is where the workflow itself is authored, so a change to the check and the
+# evidence that it works arrive in the same place.
+#
+# pull_request_review is not decoration. The agent review is posted AFTER a pull_request-
+# triggered run has already finished, and posting a review does not re-fire pull_request.
+# Without this trigger, agent-review fails once and never re-runs, however many reviews are
+# posted afterwards.
+#
+# merge_group is deliberately NOT here. Neither reusable workflow can serve a merge group
+# today: pr-compliance.mjs reads event.pull_request and exits 1 when it is absent, and
+# pr_agent_review.yml maps INPUT_PR_NUMBER from github.event.pull_request.number, which is
+# empty in a merge group. Adding the trigger ahead of that support would not make the queue
+# ready -- it would guarantee every queued pull request fails compliance and waits forever on
+# an agent-review status that is never posted. When a queue is wanted, teach both scripts to
+# resolve the pull request from github.event.merge_group.head_ref first -- a FULL ref of the
+# form refs/heads/gh-readonly-queue/main/pr-123-<sha> -- and only then add the trigger.
+
 on:
   pull_request:
-    types: [opened, synchronize, reopened, ready_for_review]
+    # `edited` is here because pr-compliance.mjs reads the pull request BODY -- the issue
+    # keyword check is the one that fails most often. Without it, a compliance failure about
+    # the body cannot be cleared by fixing the body: the event never re-fires, and re-running
+    # the job does not help either, because a re-run replays the stored event payload and so
+    # sees the old body. The only remaining ways out are a new commit or close-and-reopen,
+    # both of which are worse than one extra run. Observed on #49.
+    types: [opened, synchronize, reopened, ready_for_review, edited]
+  pull_request_review:
+    types: [submitted]
+
+# Keyed by event as well as pull request, which is load-bearing rather than tidy: the two
+# event types do NOT run the same job set. A review-triggered run skips compliance, so if it
+# shared a group with an in-flight push run it would cancel that run's compliance job and
+# never replace it -- leaving the deterministic gate cancelled, which a required check does
+# not treat as passing, with nothing to re-run it until the next push.
+#
+# Within one event type the runs really are redundant, and that is where the multiplier is:
+# read access is enough to submit a review, so review submissions are otherwise uncapped.
+#
+# The run_id fallback degrades safe. If the pull request number were ever absent, the group
+# becomes unique per run and cancels nothing, rather than collapsing onto a shared ref key
+# and cancelling other pull requests' runs.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: true
 
 jobs:
-  compliance:
+  # Named compliance-gate, not compliance, for the same reason agent-review-check is not
+  # named agent-review. This job skips on review-triggered runs, and a skipped caller job
+  # reports a check run under its BARE job id -- verified on this pull request, which shows
+  # both `compliance / Compliance` (success) and a bare `compliance` (skipped) on the same
+  # commit. GitHub counts a skipped check as passing, so a job id equal to a required check
+  # name means anyone with read access can submit a review and shadow a FAILING compliance
+  # run with a passing one. The trap is self-baiting: the bare name only ever appears in the
+  # skipped state, and it is offered in the required-checks picker precisely because review
+  # runs emit it.
+  compliance-gate:
+    # Positive form on purpose. `!= 'pull_request_review'` would silently opt this job into
+    # any trigger added later -- including the merge_group the comment above tells a future
+    # author to add, which is exactly the payload pr-compliance.mjs cannot parse. Written
+    # this way, that instruction is self-enforcing.
+    #
+    # A review submission does not change the diff, so re-running the deterministic checks on
+    # it would spend minutes to reach the same answer.
+    if: github.event_name == 'pull_request'
     permissions:
       contents: read
     uses: EasyLife365/.github/.github/workflows/pr_compliance.yml@main
+    # pr_compliance.yml declares one optional secret, SECOPS_TOKEN, consumed only by its
+    # react-architecture job behind `if: inputs.react-repo-validate` -- which this caller
+    # does not set. Kept for now because the callee does declare a secret; a candidate for
+    # the same tightening applied below if the React validator stays unused here.
     secrets: inherit
+
+  agent-review-check:
+    permissions:
+      contents: read
+      pull-requests: read
+      # The check posts an explicit commit status naming the head SHA, rather than relying on
+      # its own check run being associated with the right commit.
+      statuses: write
+    # No secrets: inherit. pr_agent_review.yml declares no secrets and runs entirely on
+    # github.token, so inheriting would hand the whole secret set to a job that needs none --
+    # and the callee is unpinned, so a step added there later would get them without any
+    # caller-side change being reviewed.
+    uses: EasyLife365/.github/.github/workflows/pr_agent_review.yml@main
