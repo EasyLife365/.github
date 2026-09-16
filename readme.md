@@ -68,7 +68,7 @@ name: PR Review
 
 on:
   pull_request:
-    types: [opened, synchronize, reopened, ready_for_review]
+    types: [opened, synchronize, reopened, ready_for_review, edited]
   pull_request_review:
     types: [submitted]
 
@@ -105,6 +105,13 @@ jobs:
     uses: EasyLife365/.github/.github/workflows/pr_code_review.yml@main
     secrets: inherit
 ```
+
+**`edited` is in the `pull_request` types on purpose.** `pr-compliance.mjs` reads the pull
+request *body*, and its issue-keyword check is the one that fails most often. Without `edited`,
+that failure cannot be cleared by the obvious action: editing the body fires no event, and
+re-running the job does not help either — a re-run replays the *stored* event payload, so it
+still sees the old body. What is left is a new commit or close-and-reopen, both worse than one
+extra run.
 
 **`pull_request_review: [submitted]` is not optional.** The agent review is posted *after* a
 `pull_request`-triggered run has already finished, and posting a review does not re-fire
