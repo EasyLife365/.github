@@ -24,13 +24,29 @@
 #       types: [submitted]
 #
 #   jobs:
-#     agent-review:
+#     agent-review-check:
 #       permissions:
 #         contents: read
 #         pull-requests: read
 #         statuses: write
 #       uses: EasyLife365/.github/.github/workflows/pr_agent_review.yml@main
-#       secrets: inherit
+#
+# Two things about that snippet are deliberate and are not style.
+#
+# The job id is NOT `agent-review`. A caller job that can ever be skipped reports a check run
+# under its bare job id, and GitHub counts a skipped check as passing -- so a job id equal to
+# the required status context is a way for the gate to be satisfied with no work done.
+#
+# There is no `secrets: inherit`. This workflow declares no secrets and runs entirely on
+# github.token. Inheriting would hand the caller's whole secret set to a job that needs none,
+# and because callers reference this file unpinned, a step added here later would receive
+# them without any caller-side change ever being reviewed.
+#
+# SAFETY CONSTRAINT FOR ANYONE EDITING THIS FILE: it must never check out the pull request
+# head. pull_request_review runs in base-repo context with a write-capable token and the
+# caller's inherited secrets; checking out and executing head content under that token is
+# what makes pull_request_target dangerous, and it would make this workflow dangerous in
+# exactly the same way. The only checkout below targets <owner>/.github on purpose.
 #
 # The ruleset requires the STATUS CONTEXT (`agent-review` by default), not this workflow's own
 # check run. A run triggered by pull_request_review does not reliably attach its check to the

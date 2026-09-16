@@ -15,8 +15,8 @@ name: PR Review
 # empty in a merge group. Adding the trigger ahead of that support would not make the queue
 # ready -- it would guarantee every queued pull request fails compliance and waits forever on
 # an agent-review status that is never posted. When a queue is wanted, teach both scripts to
-# resolve the pull request from github.event.merge_group.head_ref
-# (gh-readonly-queue/main/pr-123-<sha>) first, then add the trigger.
+# resolve the pull request from github.event.merge_group.head_ref first -- a FULL ref of the
+# form refs/heads/gh-readonly-queue/main/pr-123-<sha> -- and only then add the trigger.
 
 on:
   pull_request:
@@ -24,27 +24,50 @@ on:
   pull_request_review:
     types: [submitted]
 
-# Read access is enough to submit a review, so review submissions are a run multiplier.
-# Racing runs compute the same answer against the same head SHA, so this is cost control
-# rather than correctness.
+# Keyed by event as well as pull request, which is load-bearing rather than tidy: the two
+# event types do NOT run the same job set. A review-triggered run skips compliance, so if it
+# shared a group with an in-flight push run it would cancel that run's compliance job and
+# never replace it -- leaving the deterministic gate cancelled, which a required check does
+# not treat as passing, with nothing to re-run it until the next push.
+#
+# Within one event type the runs really are redundant, and that is where the multiplier is:
+# read access is enough to submit a review, so review submissions are otherwise uncapped.
+#
+# The run_id fallback degrades safe. If the pull request number were ever absent, the group
+# becomes unique per run and cancels nothing, rather than collapsing onto a shared ref key
+# and cancelling other pull requests' runs.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.event.pull_request.number || github.run_id }}
   cancel-in-progress: true
 
 jobs:
-  compliance:
+  # Named compliance-gate, not compliance, for the same reason agent-review-check is not
+  # named agent-review. This job skips on review-triggered runs, and a skipped caller job
+  # reports a check run under its BARE job id -- verified on this pull request, which shows
+  # both `compliance / Compliance` (success) and a bare `compliance` (skipped) on the same
+  # commit. GitHub counts a skipped check as passing, so a job id equal to a required check
+  # name means anyone with read access can submit a review and shadow a FAILING compliance
+  # run with a passing one. The trap is self-baiting: the bare name only ever appears in the
+  # skipped state, and it is offered in the required-checks picker precisely because review
+  # runs emit it.
+  compliance-gate:
+    # Positive form on purpose. `!= 'pull_request_review'` would silently opt this job into
+    # any trigger added later -- including the merge_group the comment above tells a future
+    # author to add, which is exactly the payload pr-compliance.mjs cannot parse. Written
+    # this way, that instruction is self-enforcing.
+    #
     # A review submission does not change the diff, so re-running the deterministic checks on
     # it would spend minutes to reach the same answer.
-    if: github.event_name != 'pull_request_review'
+    if: github.event_name == 'pull_request'
     permissions:
       contents: read
     uses: EasyLife365/.github/.github/workflows/pr_compliance.yml@main
+    # pr_compliance.yml declares one optional secret, SECOPS_TOKEN, consumed only by its
+    # react-architecture job behind `if: inputs.react-repo-validate` -- which this caller
+    # does not set. Kept for now because the callee does declare a secret; a candidate for
+    # the same tightening applied below if the React validator stays unused here.
     secrets: inherit
 
-  # Named agent-review-check, not agent-review: the required ruleset key is the COMMIT STATUS
-  # context `agent-review` (see pr_agent_review.yml). A skipped caller job reports under its
-  # bare job id, and GitHub counts a skipped check as passing -- so a job id equal to the
-  # status context is a way for the gate to be satisfied without any work being done.
   agent-review-check:
     permissions:
       contents: read
