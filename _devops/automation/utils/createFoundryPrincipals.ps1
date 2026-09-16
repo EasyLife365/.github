@@ -64,6 +64,8 @@ param(
         'EasyLife365-Collaboration'
         'EasyLife365-Exchange'
         'EasyLife365-EasyHub'
+        'EasyLife365-Notifications'
+        'EasyLife365-AgentHub'
         'EasyLife-Approvals'
         'EasyMeet365'
         'EasyLife-React-Auth'
