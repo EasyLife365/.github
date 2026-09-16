@@ -264,13 +264,20 @@ if (matched.length > 0) {
 // A review of an older commit is the interesting failure, and it gets its own message: the
 // author did the right thing and then pushed, which reads very differently from never having
 // reviewed at all.
-// A reviewer already requested with no review behind it is the ordering mistake the pull request
-// rules exist to prevent, and it reads very differently from simply not having reviewed yet. Say so.
-const reviewersRequested = (pull.requested_reviewers || []).length > 0;
+// A reviewer requested with NO review behind it at all is the ordering mistake the pull request
+// rules exist to prevent, and it reads very differently from simply not having got to it yet.
+//
+// Both halves are needed. requested_reviewers holds only reviewers who have not yet submitted -- a
+// human is removed from it the moment they review -- so on its own it would call a pull request
+// with one approval in and a second reviewer pending "requested before any review", which is
+// false. Teams live in a separate field, and a CODEOWNERS repository requests those instead.
+const reviewersRequested =
+  (pull.requested_reviewers || []).length > 0 || (pull.requested_teams || []).length > 0;
+const nobodyHasReviewed = reviews.length === 0;
 
 const description = stale.length > 0
   ? `Review is for an older commit - re-run /el-review on ${headSha.slice(0, 7)}`
-  : reviewersRequested
+  : reviewersRequested && nobodyHasReviewed
     ? `Reviewer requested before any review - run /el-review on ${headSha.slice(0, 7)}`
     : `No agent review for ${headSha.slice(0, 7)} - run /el-review`;
 
