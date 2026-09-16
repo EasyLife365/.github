@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 // EasyLife 365 agent-review check.
 //
-// Verifies that a Claude review exists FOR THE CURRENT HEAD COMMIT. It does not read the
+// Verifies that a Claude review exists FOR THE CURRENT HEAD COMMIT, posted as a REVIEW by
+// someone with write standing. It does not read the
 // review, judge it, or care what it found -- the judgement lives in the review itself, posted
 // by the /el-review skill in the approver's own session. This only answers "did one happen".
 //
@@ -147,18 +148,50 @@ if (cfg.exemptAuthors.includes(author)) {
   process.exit(0);
 }
 
-// Reviews carry the marker (the /el-review skill posts through the reviews API). Issue comments
-// are read too, so a review posted as a plain comment still counts -- the contract is the
-// marker, not the mechanism that delivered it.
-const [reviews, comments] = await Promise.all([
-  apiAll(`/repos/${owner}/${repo}/pulls/${cfg.prNumber}/reviews`),
-  apiAll(`/repos/${owner}/${repo}/issues/${cfg.prNumber}/comments`),
-]);
+// WHO IS ALLOWED TO SATISFY THIS CHECK
+//
+// Reviews only, and only from someone with write standing. Both restrictions exist because the
+// marker used to be accepted from any source by any author: pasting one line into an ordinary
+// pull request comment turned the check green with no review behind it.
+//
+// Issue comments are no longer read. That closes the trivial path, and it also settles a real
+// inconsistency -- the script accepted a delivery mechanism no caller observed, because a plain
+// comment raises `issue_comment`, which is not a trigger. Accepting only reviews makes what the
+// script reads and what the callers watch the same set.
+//
+// WHAT THIS DOES NOT DO, stated plainly so nobody mistakes it for enforcement: anyone with push
+// access can post this commit status directly with their own token. Commit statuses carry no
+// per-context write protection, unlike a GitHub App's check runs. So the ceiling here is "who
+// can push", and no marker rule raises it. What these rules buy is that the LAZY path is no
+// longer the wrong path -- clearing the gate without a review now takes deliberate effort
+// rather than a copied line.
+//
+// A pull request author MAY satisfy this on their own pull request. Running /el-review before
+// asking anyone to look is a good habit and banning it would only discourage it. Instead the
+// status names who posted the marker, so a human approver can see it was self-run and decide
+// whether to re-run it. Transparency rather than prohibition -- and the approval itself is a
+// separate person either way, which GitHub enforces.
+const TRUSTED_ASSOCIATIONS = new Set(['OWNER', 'MEMBER', 'COLLABORATOR']);
 
-const all = [
-  ...reviews.map((r) => ({ body: r.body, at: r.submitted_at, by: r.user?.login })),
-  ...comments.map((c) => ({ body: c.body, at: c.created_at, by: c.user?.login })),
-];
+const reviews = await apiAll(`/repos/${owner}/${repo}/pulls/${cfg.prNumber}/reviews`);
+
+// Kept separately so an untrusted marker can be reported rather than silently ignored. Someone
+// who ran /el-review without write standing did the work and deserves to be told why it did
+// not count.
+const untrusted = [];
+
+const all = [];
+for (const review of reviews) {
+  const entry = {
+    body: review.body,
+    at: review.submitted_at,
+    by: review.user?.login,
+    association: review.author_association,
+  };
+  if (TRUSTED_ASSOCIATIONS.has(review.author_association)) all.push(entry);
+  else if (MARKER.test(review.body || '')) untrusted.push(entry);
+  MARKER.lastIndex = 0;
+}
 
 const matched = [];
 const stale = [];
@@ -178,8 +211,14 @@ if (matched.length > 0) {
   const detail = [best.model && `model ${best.model}`, best.effort && `effort ${best.effort}`,
     best.findings !== undefined && `${best.findings} finding(s)`].filter(Boolean).join(', ');
 
-  await postStatus(headSha, 'success', detail ? `Reviewed (${detail})` : 'Reviewed');
-  console.log(`Agent review found for ${headSha}${detail ? ` -- ${detail}` : ''}.`);
+  // Naming the reviewer is the point of allowing self-review: an approver can see who ran it.
+  const who = best.by ? ` by @${best.by}` : '';
+  await postStatus(headSha, 'success', detail ? `Reviewed${who} (${detail})` : `Reviewed${who}`);
+  console.log(`Agent review found for ${headSha}${who}${detail ? ` -- ${detail}` : ''}.`);
+  if (best.by && best.by.toLowerCase() === author) {
+    console.log('Note: the marker was posted by the pull request author. That is allowed, and the');
+    console.log('status says so, so an approver can weigh it or re-run /el-review themselves.');
+  }
   process.exit(0);
 }
 
@@ -200,6 +239,13 @@ if (stale.length > 0) {
   for (const item of stale) {
     console.warn(`  - ${item.sha} by ${item.by || 'unknown'} at ${item.at || 'unknown time'}`);
   }
+}
+if (untrusted.length > 0) {
+  console.warn(`::warning::Ignored ${untrusted.length} marker(s) from an author without write access.`);
+  for (const item of untrusted) {
+    console.warn(`  - @${item.by || 'unknown'} (${item.association}) -- needs OWNER, MEMBER or COLLABORATOR`);
+  }
+  console.warn('');
 }
 console.warn('');
 console.warn('The approver of record runs /el-review in their own session before approving.');

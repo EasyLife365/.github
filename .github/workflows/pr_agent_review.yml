@@ -48,6 +48,16 @@
 # what makes pull_request_target dangerous, and it would make this workflow dangerous in
 # exactly the same way. The only checkout below targets <owner>/.github on purpose.
 #
+# WHO CAN SATISFY THIS CHECK
+#
+# Only a REVIEW, only from OWNER / MEMBER / COLLABORATOR. Plain issue comments are not read.
+# The author of a pull request may satisfy it on their own pull request; the status names who
+# posted the marker so an approver can see that and re-run it if they want.
+#
+# It is not tamper-proof. Anyone with push access can post this status directly with their own
+# token, because commit statuses carry no per-context write protection. The rules make the lazy
+# path stop being the wrong path; they do not make the gate unforgeable.
+
 # THE JOB'S COLOUR IS NOT THE CHECK'S ANSWER
 #
 # This job goes green whenever it managed to post a status, whatever that status says. The
