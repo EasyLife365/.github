@@ -1,0 +1,62 @@
+{
+    "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentParameters.json#",
+    "contentVersion": "1.0.0.0",
+    "parameters": {
+        "stage": {
+            "value": "p"
+        },
+        "location": {
+            "value": "swedencentral"
+        },
+        "resourceGroups": {
+            "value": {
+                "core": {
+                    "name": "foundry",
+                    "location": "swedencentral"
+                }
+            }
+        },
+        "claudeOrganizationName": {
+            "value": "EasyLife 365 AG"
+        },
+        "claudeCountryCode": {
+            "value": "CH"
+        },
+        "claudeIndustry": {
+            "value": "technology"
+        },
+        "sonnetModel": {
+            "value": "claude-sonnet-5"
+        },
+        "haikuModel": {
+            "value": ""
+        },
+        "opusModel": {
+            "value": ""
+        },
+        "modelVersion": {
+            "value": "1"
+        },
+        "sonnetCapacityK": {
+            "value": 300
+        },
+        "haikuCapacityK": {
+            "value": 25
+        },
+        "opusCapacityK": {
+            "value": 25
+        },
+        "enablePublicAccess": {
+            "value": true
+        },
+        "allowedSubnetIds": {
+            "value": []
+        },
+        "ciServicePrincipalId": {
+            "value": ""
+        },
+        "developerGroupPrincipalId": {
+            "value": ""
+        }
+    }
+}
