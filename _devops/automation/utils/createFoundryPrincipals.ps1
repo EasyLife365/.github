@@ -52,27 +52,36 @@ param(
     # Repositories whose pr_code_review.yml runs should be able to authenticate.
     # Each one costs a federated identity credential (see the cap below).
     #
-    # NOTE: these names are CASE-SENSITIVE. Entra matches the federated
-    # credential's subject against GitHub's `sub` claim verbatim, and that claim
-    # carries the repository's canonical name. A casing mismatch fails at sign-in
-    # with AADSTS700213 ("No matching federated identity record found"), not here.
-    # The Agents and Notification repositories are deliberately absent — add them
-    # once their canonical names are confirmed.
+    # NOTE: these names are CASE-SENSITIVE and must be the repository's exact
+    # canonical name. Entra matches the federated credential's subject against
+    # GitHub's `sub` claim verbatim, so a wrong name fails at SIGN-IN with
+    # AADSTS700213 ("No matching federated identity record found") -- possibly
+    # weeks later, in CI, not here. That is why Test-RepositoryNames below
+    # verifies every name against GitHub before a single credential is created.
+    #
+    # The canonical list of EasyLife repositories lives in
+    # .github-private/scripts/products-workspace.repositories.json. Check new
+    # entries against it, and against `gh repo list EasyLife365`.
     [string[]]$Repos = @(
         'EasyLife365-Core'
         'EasyLife365-Identity'
         'EasyLife365-Collaboration'
         'EasyLife365-Exchange'
         'EasyLife365-EasyHub'
-        'EasyLife365-Notifications'
-        'EasyLife365-AgentHub'
+        'EasyLife365-Notification'
+        'EasyLife365-Agents'
         'EasyLife-Approvals'
         'EasyMeet365'
         'EasyLife-React-Auth'
         'EasyLife-React-Components'
         'EasyLife-React-Core'
         '.github'
-    )
+    ),
+
+    # Skip the GitHub name check. Only for a tenant-only rehearsal where `gh` is
+    # unavailable -- it trades the one safeguard that catches a typo before it
+    # becomes a sign-in failure.
+    [switch]$SkipRepositoryCheck
 )
 
 $ErrorActionPreference = 'Stop'
@@ -90,9 +99,61 @@ if ($Repos.Count -gt $federatedCredentialLimit) {
     exit 1
 }
 
+# Verify every repository name against GitHub before touching Entra.
+#
+# This exists because a wrong name is otherwise invisible: `az` accepts any
+# string as a subject, the credential is created happily, and the only symptom
+# is AADSTS700213 the next time that repository's workflow tries to sign in.
+# Two names in this list were wrong on the first pass (EasyLife365-Notifications
+# for -Notification, EasyLife365-AgentHub for -Agents) and nothing caught them.
+function Test-RepositoryNames {
+    param([string[]]$Names)
+
+    if (-not (Get-Command gh -ErrorAction SilentlyContinue)) {
+        Write-Host "WARNING: the GitHub CLI (gh) is not on PATH, so repository names cannot be verified." -ForegroundColor Yellow
+        Write-Host "         A typo here surfaces only as AADSTS700213 at sign-in. Install gh, or re-run with -SkipRepositoryCheck to accept that." -ForegroundColor Yellow
+        exit 1
+    }
+
+    Write-Host "Verifying repository names against GitHub..." -ForegroundColor Cyan
+    $unknown = @()
+
+    foreach ($name in $Names) {
+        # --jq .full_name so a rename shows up as a mismatch rather than a pass:
+        # GitHub resolves an old name to its successor, and the credential must
+        # carry the CURRENT one.
+        $fullName = gh api "repos/$Organization/$name" --jq .full_name 2>&1
+        if ($LASTEXITCODE -ne 0) {
+            Write-Host "  ! $name does not resolve" -ForegroundColor Red
+            $unknown += $name
+            continue
+        }
+
+        $fullName = "$fullName".Trim()
+        if ($fullName -cne "$Organization/$name") {
+            Write-Host "  ! $name resolves to '$fullName' - use that name instead" -ForegroundColor Red
+            $unknown += $name
+            continue
+        }
+
+        Write-Host "  ✓ $fullName" -ForegroundColor Green
+    }
+
+    if ($unknown.Count -gt 0) {
+        Write-Host ''
+        Write-Host "ERROR: $($unknown.Count) repository name(s) could not be confirmed: $($unknown -join ', ')" -ForegroundColor Red
+        Write-Host "       Nothing has been created. Fix the -Repos list and re-run." -ForegroundColor Red
+        exit 1
+    }
+}
+
 $output = az account show 2>&1
 if (!$?) {
     az login
+}
+
+if (-not $SkipRepositoryCheck) {
+    Test-RepositoryNames -Names $Repos
 }
 
 $tenantId = az account show --query tenantId -o tsv --only-show-errors 2>&1
@@ -191,13 +252,19 @@ foreach ($repo in $Repos) {
     # az mangles embedded double quotes in inline JSON on Windows, so the
     # payload goes through a file instead of --parameters '<json>'.
     $credentialFile = Join-Path ([System.IO.Path]::GetTempPath()) "fic-$([guid]::NewGuid()).json"
-    @{
+    $credentialBody = @{
         name        = $credentialName
         issuer      = $githubIssuer
         subject     = $subject
         description = "GitHub Actions OIDC for $Organization/$repo pull requests"
         audiences   = @($entraAudience)
-    } | ConvertTo-Json -Depth 5 | Set-Content -Path $credentialFile -Encoding utf8
+    } | ConvertTo-Json -Depth 5
+
+    # WriteAllText with an explicit BOM-less encoding, not Set-Content -Encoding
+    # utf8: that writes a BOM on Windows PowerShell 5.1 and az rejects the
+    # parameter file. Same reason as in .github-private's
+    # scripts/Set-CiFederatedCredentials.ps1.
+    [IO.File]::WriteAllText($credentialFile, $credentialBody, [Text.UTF8Encoding]::new($false))
 
     try {
         $result = az ad app federated-credential create --id $applicationObjectId --parameters "@$credentialFile" --only-show-errors 2>&1
