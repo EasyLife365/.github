@@ -1,28 +1,42 @@
+targetScope = 'subscription'
+
 // ============================================================================
 // Claude on Microsoft Foundry — EasyLife 365
 // ----------------------------------------------------------------------------
-// Provisions one Foundry account + project + Claude model deployment(s),
-// serving two consumers with a single deployment:
+// Provisions one Foundry account + project + Claude model deployment(s) in its
+// own resource group, serving two consumers from a single deployment:
 //   1. `pr_code_review.yml` (cloud, GitHub Actions) — authenticates via a
 //      federated Entra ID service principal (OIDC), never an API key.
 //   2. Developers locally, as a fallback when their personal Claude
 //      subscription hits its usage limit — authenticate via `az login`
 //      (their own Entra identity), also never an API key.
 //
+// Structured to match this estate's usual infrastructure layout (compare
+// EasyLife365-EasyHub's and EasyLife365-Collaboration's
+// _devops/automation/deployment/infrastructure/): a subscription-scope
+// main.bicep, a resourcegroups/ module, a common/ folder for shared
+// role-assignment helpers, and a feature module (here ai/) called with
+// `scope: resourceGroup(...)`. Deploy it with provision-environment.ps1 in
+// this same folder, the same way every other product repo deploys its infra.
+//
 // Adapted from Microsoft's own reference template:
 //   https://github.com/Azure-Samples/claude (infra-bicep/infra/foundry.bicep)
-// Deliberate deviations from that template, and why, are called out inline
-// below. Re-check the upstream repo before reusing this after a long gap —
-// Foundry's Claude catalog, region list, and API version move quickly.
+// and from EasyLife365-EasyHub's own ai/ folder (its aiServices.bicep /
+// aiModelDeployment.bicep, deploying Azure OpenAI rather than Claude).
+// Deliberate deviations from both, and why, are called out inline in
+// bicep/ai/*.bicep. Re-check the upstream repo before reusing this after a
+// long gap — Foundry's Claude catalog, region list, and API version move
+// quickly.
 //
 // ----------------------------------------------------------------------------
 // READ BEFORE DEPLOYING — legal attestation
 // ----------------------------------------------------------------------------
-// `modelProviderData` (organizationName, countryCode, industry) is sent to
-// Anthropic on every deployment and used by the Cognitive Services resource
-// provider to AUTO-SIGN the Azure Marketplace offer for Anthropic Claude on
-// your organization's behalf — no manual click-through happens. Before you
-// deploy this:
+// `modelProviderData` (organizationName, countryCode, industry — set below and
+// threaded down to every model deployment) is sent to Anthropic on every
+// deployment and used by the Cognitive Services resource provider to
+// AUTO-SIGN the Azure Marketplace offer for Anthropic Claude on your
+// organization's behalf — no manual click-through happens. Before you deploy
+// this:
 //   1. Read https://www.anthropic.com/legal/commercial-terms (the master
 //      agreement — Foundry requires an Enterprise or MCA-E subscription),
 //      https://www.anthropic.com/legal/aup (incorporated by reference), and
@@ -30,11 +44,12 @@
 //      reference — governs which regions are actually eligible; the
 //      `location` allowed-list below is this repo's best current
 //      understanding, not a substitute for checking that page yourself).
-//   2. Set `claudeOrganizationName`, `claudeCountryCode`, `claudeIndustry`
-//      below to values that accurately describe EasyLife 365 AG — they are
-//      part of your acceptance of those terms. There are deliberately no
-//      defaults for these three params in this file; you must supply them
-//      explicitly at deploy time.
+//   2. Set `claudeOrganizationName`, `claudeCountryCode`, `claudeIndustry` in
+//      config/main.parameters-<stage>.json to values that accurately describe
+//      EasyLife 365 AG (or the correct entity/jurisdiction) — they are part of
+//      your acceptance of those terms. They are deliberately left blank in the
+//      checked-in parameter files, and provision-environment.ps1 refuses to
+//      deploy until they're filled in.
 //
 // ----------------------------------------------------------------------------
 // READ BEFORE DEPLOYING — EU data residency
@@ -51,27 +66,14 @@
 // region for the resource"), confirm the current guarantee directly against
 // Anthropic's Supported Regions Policy and your Microsoft/Anthropic account
 // team before relying on this deployment for that purpose.
-//
-// ----------------------------------------------------------------------------
-// What this deliberately does differently from the upstream sample:
-//   - `disableLocalAuth: true` on the account (upstream defaults to `false`,
-//     leaving account API keys enabled). EasyLife 365's identity model is
-//     Entra ID / federated tokens everywhere, never long-lived static keys
-//     (see docs/agents/identities.md in .github-private) — this makes that
-//     the ONLY way in, not just the recommended one.
-//   - Two RBAC principals, not one: a service principal for the GitHub
-//     Actions CI path and a security group for developer fallback access,
-//     each with the correct `principalType` set explicitly (the upstream
-//     sample hardcodes `principalType: 'User'`, which is wrong for a service
-//     principal or a group and can cause the role assignment to silently
-//     fail to resolve).
-//   - Only `sonnet` is deployed by default. Both stated use cases (PR review,
-//     developer fallback) are well served by one capable, cost-reasonable
-//     model; haiku/opus stay available as params, not deployed until there's
-//     a concrete reason to pay for the extra quota.
 // ============================================================================
 
-targetScope = 'subscription'
+@description('Deployment stage. "p" is the one real deployment every consumer (CI + developers) points at. "d" is an optional sandbox run in a throwaway subscription, useful only for rehearsing this template before it touches the real shared resource — there is no per-ring product traffic behind this account the way there is for a product repo\'s "d"/"i"/"p".')
+@allowed([
+  'd'
+  'p'
+])
+param stage string = 'p'
 
 @description('Azure region. eastus2 and swedencentral currently host all three Claude families; westus2 is sonnet+opus only. Re-verify against https://aka.ms/supported_anthropic_regions before deploying — this list is this file\'s best current understanding, not a live source.')
 @allowed([
@@ -81,15 +83,17 @@ targetScope = 'subscription'
 ])
 param location string = 'swedencentral'
 
-@description('Resource group to create for the Foundry account and project.')
-param resourceGroupName string = 'rg-el-agents-foundry'
-
-@description('Short prefix for resource names.')
-param baseName string = 'el-agents-claude'
+@description('The resource group to create for the Foundry account and project.')
+param resourceGroups {
+  core: {
+    name: string
+    location: string
+  }
+}
 
 // --- Legal attestation — see the header comment above. No defaults on
-// purpose: these values are sent to Anthropic and auto-sign binding terms,
-// so a silent default is exactly what this file should never do. -----------
+// purpose: these values are sent to Anthropic and auto-sign binding terms, so
+// a silent default is exactly what this file should never do. -------------
 @description('REQUIRED. Legal entity name — must accurately describe EasyLife 365 AG (or the correct entity for your jurisdiction/subsidiary).')
 param claudeOrganizationName string
 
@@ -113,12 +117,11 @@ param claudeCountryCode string
 param claudeIndustry string
 
 // --- Model selection ---------------------------------------------------
-// Deployment name is `<model>-<suffix>`; the model id itself (e.g.
-// "claude-sonnet-4-6") must match what's actually live in the Foundry
-// catalog for the chosen region and API version at deploy time — check the
-// Foundry portal's model catalog (or Get-ClaudeCatalog.ps1 from the
-// Azure-Samples/claude repo) rather than trusting a hardcoded default here,
-// since this moves faster than this file will be kept in sync.
+// Deployment name is the model id itself (e.g. "claude-sonnet-4-6"), which
+// must match what's actually live in the Foundry catalog for the chosen
+// region and API version at deploy time — check the Foundry portal's model
+// catalog rather than trusting a hardcoded default here, since this moves
+// faster than this file will be kept in sync.
 @description('Sonnet family model id to deploy. Empty = skip.')
 param sonnetModel string
 
@@ -131,14 +134,20 @@ param opusModel string = ''
 @description('Model version string for every deployed family.')
 param modelVersion string = '1'
 
-@description('Sonnet deployment capacity (TPM / 1000). Shared by cloud PR review across 14 repos and developer fallback use — raise if you see 429s under real load; there is no way to guess the right number before that traffic exists.')
-param sonnetCapacity int = 50
+@description('Sonnet deployment capacity (TPM / 1000). Shared by cloud PR review across every repo and developer fallback use — raise if you see 429s under real load; there is no way to guess the right number before that traffic exists.')
+param sonnetCapacityK int = 50
 
 @description('Haiku deployment capacity (TPM / 1000). Only relevant if haikuModel is set.')
-param haikuCapacity int = 25
+param haikuCapacityK int = 25
 
 @description('Opus deployment capacity (TPM / 1000). Only relevant if opusModel is set.')
-param opusCapacity int = 25
+param opusCapacityK int = 25
+
+@description('Whether the Foundry account answers on the public endpoint. See the parameter of the same name in bicep/ai/aiServices.bicep for why this defaults to true here.')
+param enablePublicAccess bool = true
+
+@description('Subnet resource IDs allowed to reach the account when enablePublicAccess is false.')
+param allowedSubnetIds array = []
 
 // --- Access: two distinct principals, two distinct purposes -------------
 @description('Object id of the Entra service principal that pr_code_review.yml authenticates as (the one with a federated credential trusting the GitHub Actions OIDC issuer for the relevant repo/workflow). Empty = skip this grant.')
@@ -147,56 +156,38 @@ param ciServicePrincipalId string = ''
 @description('Object id of the Entra security group containing developers who should be able to fall back to this deployment locally via `az login`. Empty = skip this grant. Prefer a group over individual users so onboarding/offboarding a developer never requires redeploying this template.')
 param developerGroupPrincipalId string = ''
 
-var tags = {
-  purpose: 'claude-code-review-and-dev-fallback'
-  managedBy: 'bicep'
-  source: 'https://github.com/EasyLife365/.github/blob/main/infra/foundry.bicep'
-}
-var suffix = take(uniqueString(subscription().id, resourceGroupName, baseName), 6)
-var accountName = '${baseName}-${suffix}'
-var projectName = '${baseName}-proj-${suffix}'
+var prefixWithStage = 'elagents-${stage}'
+var rgFoundryName = 'rg-${prefixWithStage}-${resourceGroups.core.name}'
 
-// Built-in role: `Cognitive Services User`. Least-privilege role documented
-// for keyless Foundry inference — grants exactly the data action Claude
-// inference needs (Claude routes through the MaaS data path) and nothing
-// broader. See: https://learn.microsoft.com/azure/foundry/foundry-models/how-to/configure-entra-id
-var cognitiveServicesUserRoleId = 'a97b65f3-24c7-4388-baec-2e87135dc908'
-
-var sonnetDeploymentNameVar = empty(sonnetModel) ? '' : '${sonnetModel}-${suffix}'
-var haikuDeploymentNameVar = empty(haikuModel) ? '' : '${haikuModel}-${suffix}'
-var opusDeploymentNameVar = empty(opusModel) ? '' : '${opusModel}-${suffix}'
-
-resource rg 'Microsoft.Resources/resourceGroups@2024-03-01' = {
-  name: resourceGroupName
-  location: location
-  tags: tags
-}
-
-module foundry 'foundry-account.bicep' = {
-  name: 'foundry-account-deploy'
-  scope: rg
+module rgFoundryModule './resourcegroups/resourceGroup.bicep' = {
+  name: 'elagents-rgFoundryModule'
   params: {
+    name: rgFoundryName
+    location: resourceGroups.core.location
+  }
+}
+
+module aiModule './ai/main.bicep' = {
+  name: 'elagents-ai-module'
+  dependsOn: [rgFoundryModule]
+  scope: resourceGroup(rgFoundryName)
+  params: {
+    prefix: prefixWithStage
     location: location
-    tags: tags
-    accountName: accountName
-    projectName: projectName
-    suffix: suffix
-    sonnetModel: sonnetModel
-    haikuModel: haikuModel
-    opusModel: opusModel
-    sonnetDeploymentName: sonnetDeploymentNameVar
-    haikuDeploymentName: haikuDeploymentNameVar
-    opusDeploymentName: opusDeploymentNameVar
-    sonnetCapacity: sonnetCapacity
-    haikuCapacity: haikuCapacity
-    opusCapacity: opusCapacity
-    modelVersion: modelVersion
+    enablePublicAccess: enablePublicAccess
+    allowedSubnetIds: allowedSubnetIds
     claudeOrganizationName: claudeOrganizationName
     claudeCountryCode: claudeCountryCode
     claudeIndustry: claudeIndustry
+    sonnetModel: sonnetModel
+    haikuModel: haikuModel
+    opusModel: opusModel
+    modelVersion: modelVersion
+    sonnetCapacityK: sonnetCapacityK
+    haikuCapacityK: haikuCapacityK
+    opusCapacityK: opusCapacityK
     ciServicePrincipalId: ciServicePrincipalId
     developerGroupPrincipalId: developerGroupPrincipalId
-    cognitiveServicesUserRoleId: cognitiveServicesUserRoleId
   }
 }
 
@@ -205,9 +196,9 @@ module foundry 'foundry-account.bicep' = {
 // each developer's Claude Code activator (ANTHROPIC_FOUNDRY_RESOURCE +
 // ANTHROPIC_DEFAULT_SONNET_MODEL, per Microsoft's configure-claude-code
 // pattern) once this deploys.
-output claudeFoundryBaseUrl string = foundry.outputs.claudeBaseUrl
-output foundryAccountName string = foundry.outputs.foundryAccountName
-output foundryResourceGroup string = rg.name
-output sonnetDeploymentName string = foundry.outputs.sonnetDeploymentName
-output haikuDeploymentName string = foundry.outputs.haikuDeploymentName
-output opusDeploymentName string = foundry.outputs.opusDeploymentName
+output claudeFoundryBaseUrl string = aiModule.outputs.claudeBaseUrl
+output foundryAccountName string = aiModule.outputs.aiServicesName
+output foundryResourceGroup string = rgFoundryName
+output sonnetDeploymentName string = aiModule.outputs.sonnetDeploymentName
+output haikuDeploymentName string = aiModule.outputs.haikuDeploymentName
+output opusDeploymentName string = aiModule.outputs.opusDeploymentName

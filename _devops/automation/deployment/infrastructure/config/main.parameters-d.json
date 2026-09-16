@@ -1,0 +1,62 @@
+{
+    "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentParameters.json#",
+    "contentVersion": "1.0.0.0",
+    "parameters": {
+        "stage": {
+            "value": "d"
+        },
+        "location": {
+            "value": "swedencentral"
+        },
+        "resourceGroups": {
+            "value": {
+                "core": {
+                    "name": "foundry",
+                    "location": "swedencentral"
+                }
+            }
+        },
+        "claudeOrganizationName": {
+            "value": ""
+        },
+        "claudeCountryCode": {
+            "value": ""
+        },
+        "claudeIndustry": {
+            "value": "technology"
+        },
+        "sonnetModel": {
+            "value": "claude-sonnet-4-6"
+        },
+        "haikuModel": {
+            "value": ""
+        },
+        "opusModel": {
+            "value": ""
+        },
+        "modelVersion": {
+            "value": "1"
+        },
+        "sonnetCapacityK": {
+            "value": 10
+        },
+        "haikuCapacityK": {
+            "value": 10
+        },
+        "opusCapacityK": {
+            "value": 10
+        },
+        "enablePublicAccess": {
+            "value": true
+        },
+        "allowedSubnetIds": {
+            "value": []
+        },
+        "ciServicePrincipalId": {
+            "value": ""
+        },
+        "developerGroupPrincipalId": {
+            "value": ""
+        }
+    }
+}
