@@ -4,25 +4,32 @@ name: PR Review
 # purpose: it is where the workflow itself is authored, so a change to the check and the
 # evidence that it works arrive in the same place.
 #
-# The extra triggers are not decoration:
+# pull_request_review is not decoration. The agent review is posted AFTER a pull_request-
+# triggered run has already finished, and posting a review does not re-fire pull_request.
+# Without this trigger, agent-review fails once and never re-runs, however many reviews are
+# posted afterwards.
 #
-#   pull_request_review  -- the agent review is posted AFTER a pull_request-triggered run has
-#                           already finished, and posting a review does not re-fire
-#                           pull_request. Without this, agent-review fails once and never
-#                           re-runs, however many reviews are posted afterwards.
-#
-#   merge_group          -- required before a merge queue can be enabled anywhere. A queued
-#                           merge waits on checks that never run if the workflow does not
-#                           trigger on the merge group, so the queue hangs rather than merges.
-#                           Added now so the trigger is already in place when the queue is
-#                           turned on, rather than discovered by the first stuck merge.
+# merge_group is deliberately NOT here. Neither reusable workflow can serve a merge group
+# today: pr-compliance.mjs reads event.pull_request and exits 1 when it is absent, and
+# pr_agent_review.yml maps INPUT_PR_NUMBER from github.event.pull_request.number, which is
+# empty in a merge group. Adding the trigger ahead of that support would not make the queue
+# ready -- it would guarantee every queued pull request fails compliance and waits forever on
+# an agent-review status that is never posted. When a queue is wanted, teach both scripts to
+# resolve the pull request from github.event.merge_group.head_ref
+# (gh-readonly-queue/main/pr-123-<sha>) first, then add the trigger.
 
 on:
   pull_request:
     types: [opened, synchronize, reopened, ready_for_review]
   pull_request_review:
     types: [submitted]
-  merge_group:
+
+# Read access is enough to submit a review, so review submissions are a run multiplier.
+# Racing runs compute the same answer against the same head SHA, so this is cost control
+# rather than correctness.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
 
 jobs:
   compliance:
@@ -34,14 +41,19 @@ jobs:
     uses: EasyLife365/.github/.github/workflows/pr_compliance.yml@main
     secrets: inherit
 
-  agent-review:
-    # Nothing to review in a merge group: the pull request was reviewed before it was queued.
-    if: github.event_name != 'merge_group'
+  # Named agent-review-check, not agent-review: the required ruleset key is the COMMIT STATUS
+  # context `agent-review` (see pr_agent_review.yml). A skipped caller job reports under its
+  # bare job id, and GitHub counts a skipped check as passing -- so a job id equal to the
+  # status context is a way for the gate to be satisfied without any work being done.
+  agent-review-check:
     permissions:
       contents: read
       pull-requests: read
       # The check posts an explicit commit status naming the head SHA, rather than relying on
       # its own check run being associated with the right commit.
       statuses: write
+    # No secrets: inherit. pr_agent_review.yml declares no secrets and runs entirely on
+    # github.token, so inheriting would hand the whole secret set to a job that needs none --
+    # and the callee is unpinned, so a step added there later would get them without any
+    # caller-side change being reviewed.
     uses: EasyLife365/.github/.github/workflows/pr_agent_review.yml@main
-    secrets: inherit
