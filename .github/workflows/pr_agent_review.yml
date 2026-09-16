@@ -1,0 +1,96 @@
+# Verifies a Claude review exists for the pull request's CURRENT head commit.
+#
+# The approval rule is "one human approval plus a passing agent review on every pull request".
+# The human half is enforced by the branch ruleset. This is the other half.
+#
+# It does not read the review or judge what it found -- the judgement is in the review itself,
+# posted by the /review skill in the approver's own session. This answers only "did one
+# happen, for this commit".
+#
+# Binding it to the head commit is the whole point. A review of an earlier commit must not
+# satisfy the check for code pushed afterwards, or you review once, push anything, and merge.
+#
+# ---------------------------------------------------------------------------
+# CALLER REQUIREMENTS -- this needs more than the other reusable workflows
+# ---------------------------------------------------------------------------
+# The review is posted AFTER a pull_request-triggered run has already finished, so a caller
+# that only triggers on pull_request will fail this check and never re-run it. The caller must
+# also trigger on pull_request_review, and must grant statuses: write.
+#
+#   on:
+#     pull_request:
+#       types: [opened, synchronize, reopened, ready_for_review]
+#     pull_request_review:
+#       types: [submitted]
+#
+#   jobs:
+#     agent-review:
+#       permissions:
+#         contents: read
+#         pull-requests: read
+#         statuses: write
+#       uses: EasyLife365/.github/.github/workflows/pr_agent_review.yml@main
+#       secrets: inherit
+#
+# The ruleset requires the STATUS CONTEXT (`agent-review` by default), not this workflow's own
+# check run. A run triggered by pull_request_review does not reliably attach its check to the
+# pull request's head SHA, so a required check depending on that association would pass or fail
+# against the wrong commit. The script posts an explicit status naming the SHA instead.
+
+name: PR agent review
+
+on:
+  workflow_call:
+    inputs:
+      status-context:
+        description: 'Commit status context to post. This is the name the branch ruleset requires -- change it in both places or not at all.'
+        required: false
+        type: string
+        default: 'agent-review'
+      exempt-authors:
+        description: 'Comma-separated authors exempt from agent review. Bump and dependency pull requests are proven by CI, and reviewing a version-number diff is spend with nothing to find.'
+        required: false
+        type: string
+        default: 'dependabot[bot],renovate[bot]'
+      node-version:
+        description: 'Node version used to run the check.'
+        required: false
+        type: string
+        default: '24.x'
+
+permissions:
+  contents: read
+  pull-requests: read
+  statuses: write
+
+jobs:
+  agent-review:
+    name: Agent review
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      # The script lives in this repository, not the one under review. job_workflow_sha pins it
+      # to the same revision as this workflow, so a caller on an older ref keeps the behaviour
+      # it was reviewed against.
+      - name: Checkout shared scripts
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ github.repository_owner }}/.github
+          ref: ${{ github.job_workflow_sha || 'main' }}
+          path: .easylife-workflows
+          fetch-depth: 1
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ inputs.node-version }}
+
+      - name: Check for an agent review on the head commit
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          # Both trigger shapes carry the pull request, but under different keys.
+          INPUT_PR_NUMBER: ${{ github.event.pull_request.number }}
+          INPUT_STATUS_CONTEXT: ${{ inputs.status-context }}
+          INPUT_EXEMPT_AUTHORS: ${{ inputs.exempt-authors }}
+        run: node .easylife-workflows/scripts/pr-agent-review.mjs
