@@ -57,6 +57,19 @@ runs it sees a full set of findings and reasonably believes they have reviewed t
 while the pull request itself receives nothing and stays red. That is why ours carries the `el-`
 prefix rather than sitting next to it as `review`.
 
+**Who can satisfy it.** The marker is accepted only from a **review** (not a plain comment) by
+someone with `OWNER`, `MEMBER` or `COLLABORATOR` standing. A pull request author *may* satisfy it
+on their own pull request — running `/el-review` before asking anyone to look is a good habit and
+banning it would only discourage it — but the status names who posted it, so an approver sees a
+self-review and can re-run it. The human approval is a separate person regardless; GitHub
+enforces that.
+
+**This is not tamper-proof, and should not be described as such.** Anyone with push access can
+post the `agent-review` status directly with their own token — commit statuses carry no
+per-context write protection. The ceiling is "who can push". What the marker rules buy is that
+the *lazy* path is no longer the wrong path: clearing the gate without a review takes deliberate
+effort rather than a copied line.
+
 **Read the status, not the job.** The `agent-review-check` job goes green whenever it posted a
 status; the answer is in the `agent-review` **status** itself. A check run is never retracted, so
 once a review lands the review-triggered run adds a second check run of the same name — you will
