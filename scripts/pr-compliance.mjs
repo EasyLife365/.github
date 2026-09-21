@@ -138,11 +138,20 @@ console.log('');
 // was about to append it; that workflow is gone, so the title is now written by hand. The
 // warning is kept rather than promoted to a failure because that is a policy decision, not a
 // consequence of removing the automation. Promote it if titles start drifting.
+//
+// BOTS ARE EXEMPT, as of 2026-09-21. Dependabot and Renovate never reference an issue -- there is
+// no issue to reference, the dependency graph is the traceability record -- so every dependency
+// bump PR was failing this check unconditionally before this exemption existed, on every
+// repository, with no way to fix it from the PR itself. That made `compliance-gate / Compliance`
+// a required check a bot-authored PR could NEVER pass, which is the same class of defect fixed for
+// `agent-review` on 2026-09-18 (issue #150): a required check that can never report -- or here,
+// can never pass -- blocks a pull request forever. `branch-name` a few lines below already exempts
+// bots for the same reason; this check simply hadn't been given the same guard.
 
 const KEYWORD_IN_BODY = /\b(Closes|Fixes|Associates|Resolves)\s+(?:[\w.-]+\/[\w.-]+)?#\d+/i;
 const KEYWORD_SUFFIX = /\.\s*(Closes|Fixes|Associates)\s+#\d+\.?\s*$/;
 
-if (enabled('pr-title')) {
+if (enabled('pr-title') && !isBot) {
   if (!KEYWORD_IN_BODY.test(body)) {
     fail(
       'pr-title',
