@@ -1,0 +1,28 @@
+# Dependabot config -- github-actions ecosystem only, for now.
+#
+# nuget and npm are deliberately not enabled yet: every repository's own CI needs
+# GITHUB_PACKAGE_TOKEN to resolve EL.* / @easylife365/* packages from GitHub Packages,
+# and no equivalent credential exists for Dependabot anywhere in the estate -- checked
+# both org- and repo-level Dependabot secrets, none exist. Adding those ecosystems
+# without one would fail to resolve private packages on every update, the same way
+# every Dependabot PR used to fail the pr-title compliance check unconditionally
+# before EasyLife365/.github#69/#70. Tracked in EasyLife365/.github-private#158, to
+# be added once issue #144's service identity provides that credential.
+version: 2
+updates:
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    groups:
+      actions-minor-patch:
+        update-types:
+          - "minor"
+          - "patch"
+      actions-major:
+        update-types:
+          - "major"
+    open-pull-requests-limit: 10
+    labels:
+      - "dependencies"
