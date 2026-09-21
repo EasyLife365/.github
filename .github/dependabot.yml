@@ -16,9 +16,13 @@ updates:
       interval: "weekly"
       day: "monday"
     groups:
-      actions:
-        patterns:
-          - "*"
+      actions-minor-patch:
+        update-types:
+          - "minor"
+          - "patch"
+      actions-major:
+        update-types:
+          - "major"
     open-pull-requests-limit: 10
     labels:
       - "dependencies"
