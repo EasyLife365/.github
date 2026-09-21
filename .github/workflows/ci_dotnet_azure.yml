@@ -1,4 +1,17 @@
-name: Dotnet Build & Test
+name: Dotnet Build & Test (Azure)
+
+# Split out of ci_dotnet.yml so that workflow could drop id-token: write entirely and safely
+# accept a caller-supplied checkout-ref for Dependabot/Renovate PRs (see EasyLife365/.github-
+# private#158). id-token: write cannot be made conditional on an input -- a reusable workflow's
+# permissions are requested once, statically, for the whole file -- so a single file offering
+# both "run against untrusted checkout-ref content" and "sign in to Azure via OIDC" would expose
+# an OIDC-minting credential to whatever code runs once checkout-ref makes that untrusted content
+# real. This file keeps the Azure capability and NEVER accepts checkout-ref: it is for a caller's
+# ordinary push/pull_request path only, exactly as ci_dotnet.yml behaved before that split. A
+# caller that needs both -- Azure-backed tests on its normal PR path, and Dependabot/Renovate
+# support on the bot path -- calls this file for the former and ci_dotnet.yml for the latter, as
+# two separate jobs gated by actor, the same way a single job would gate between pull_request and
+# pull_request_target.
 
 on:
   workflow_call:
@@ -27,7 +40,7 @@ on:
         required: false
         type: string
         default: ''
-      
+
       allow-zero-tests:
         description: 'Treat zero discovered/matched tests as warning instead of failure'
         required: false
@@ -76,8 +89,26 @@ on:
         type: number
         default: 15
 
-      checkout-ref:
-        description: 'Ref to check out, e.g. github.event.pull_request.head.sha. Needed only by a caller using pull_request_target (which otherwise leaves github.sha resolving to the BASE branch, not the pull request being tested) -- leave empty for the normal push/pull_request case.'
+      azure-login:
+        description: 'Sign in to Azure with OIDC before the test step, so fixtures can resolve @Microsoft.KeyVault(SecretUri=...) references out of their configuration. Identity comes from the CI_AADAPPID / TENANTID / SUBSCRIPTIONID variables unless overridden by the inputs below.'
+        required: false
+        type: boolean
+        default: false
+
+      azure-client-id:
+        description: 'Override for the Entra application (client) id. Leave empty to use the CI_AADAPPID variable, which resolves against the CALLING repository and so can be set once at organization scope.'
+        required: false
+        type: string
+        default: ''
+
+      azure-tenant-id:
+        description: 'Override for the Entra tenant id. Leave empty to use the TENANTID variable.'
+        required: false
+        type: string
+        default: ''
+
+      azure-subscription-id:
+        description: 'Optional. Override for the Azure subscription id. Leave empty to use the SUBSCRIPTIONID variable, or leave both empty: Key Vault data-plane calls are not subscription-scoped, and the sign-in then runs with allow-no-subscriptions.'
         required: false
         type: string
         default: ''
@@ -86,50 +117,26 @@ on:
       PACKAGE-TOKEN:
         required: true
 
-# EVERY CALLER MUST GRANT ALL THREE OF THESE, or none at all.
-#
-# A reusable workflow's permissions block is a REQUEST, not a ceiling. The caller's own block caps
-# it, and anything the caller does not list becomes "none" -- at which point GitHub refuses the run
-# at startup, before a single job begins.
-#
-# A caller with no permissions block at all is fine: it inherits the repository default and this
-# block is satisfied. The trap is a caller with a PARTIAL block, which is strictly worse than none.
-#
-# checks and pull-requests: the publish-unit-test-result-action step.
-#
-# No id-token here, deliberately, and never add it back: this file accepts a caller-supplied
-# checkout-ref so Dependabot/Renovate PRs can restore and test for real (see the actor guard
-# below), and id-token: write would put an OIDC-minting credential in the environment of whatever
-# code that untrusted content brings with it. A caller that also needs Azure/Key-Vault-backed
-# fixtures (azure-login) calls ci_dotnet_azure.yml instead, on its own trusted (non-checkout-ref)
-# path -- see that file's header comment for why the two are separate rather than one workflow
-# with both capabilities.
+# EVERY CALLER MUST GRANT ALL FOUR OF THESE, or none at all -- see ci_dotnet.yml's own comment for
+# why a partial block is worse than none. id-token: write lives ONLY in this file, never in
+# ci_dotnet.yml, specifically so that file can safely accept checkout-ref (real Dependabot/Renovate
+# PR content) without an OIDC-minting credential being present for whatever code that content
+# brings with it. Never add checkout-ref support to this file.
 permissions:
   checks: write
   contents: read
   pull-requests: write
+  id-token: write
 
 jobs:
   run-tests:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Refuse checkout-ref for anyone but an allow-listed bot
-        if: ${{ inputs.checkout-ref != '' && github.actor != 'dependabot[bot]' && github.actor != 'renovate[bot]' }}
-        run: |
-          echo "::error::checkout-ref was passed ('${{ inputs.checkout-ref }}') but actor '${{ github.actor }}' is not dependabot[bot] or renovate[bot]. Refusing to check out that ref rather than trust a caller-side actor gate that this workflow cannot see or verify."
-          exit 1
-
       - uses: actions/checkout@v4
         with:
-          ref: ${{ inputs.checkout-ref || github.sha }}
           fetch-depth: 0
           fetch-tags: true
-          # false because this job's GITHUB_TOKEN carries checks:write and pull-requests:write
-          # (see the permissions block above) and this workflow now sometimes runs against
-          # pull_request_target content (checkout-ref set by the caller) -- a persisted
-          # credential would sit on disk for the rest of the job, readable by any code that
-          # runs afterward, including a package's own build-time targets.
           persist-credentials: false
 
       - name: Setup .NET
@@ -198,6 +205,40 @@ jobs:
         shell: bash
         run: azurite --skipApiVersionCheck &
 
+      - name: Check Azure sign-in inputs
+        if: ${{ inputs.azure-login && inputs.run-tests }}
+        shell: bash
+        run: |
+          missing=""
+          if [ -z "${{ inputs.azure-client-id || vars.CI_AADAPPID }}" ]; then missing="$missing CI_AADAPPID"; fi
+          if [ -z "${{ inputs.azure-tenant-id || vars.TENANTID }}" ]; then missing="$missing TENANTID"; fi
+          if [ -n "$missing" ]; then
+            echo "::error::azure-login is true but these are empty:$missing."
+            echo "::error::Set them once as ORGANIZATION variables and scope them to this repository."
+            echo "::error::A variable scoped to a GitHub environment does not resolve here: the test job"
+            echo "::error::deliberately joins no environment, so that pull requests are not gated by"
+            echo "::error::deployment protection rules. Organization or repository scope, not environment."
+            exit 1
+          fi
+          if [ -z "${{ inputs.azure-subscription-id || vars.SUBSCRIPTIONID }}" ]; then
+            echo "No subscription id configured; signing in with allow-no-subscriptions."
+            echo "That is expected: Key Vault data-plane calls are not subscription-scoped, and"
+            echo "the Key Vault roles carry only dataActions, so this principal may see none."
+          fi
+
+      - name: Azure login
+        if: ${{ inputs.azure-login && inputs.run-tests }}
+        uses: azure/login@v2
+        with:
+          # vars resolves against the CALLING repository, so one organization variable
+          # serves every caller and no identity is repeated per repository.
+          client-id: ${{ inputs.azure-client-id || vars.CI_AADAPPID }}
+          tenant-id: ${{ inputs.azure-tenant-id || vars.TENANTID }}
+          subscription-id: ${{ inputs.azure-subscription-id || vars.SUBSCRIPTIONID }}
+          # Without this, az login fails when the principal can enumerate no subscription --
+          # which is the normal case here, since the Key Vault roles grant dataActions only.
+          allow-no-subscriptions: ${{ (inputs.azure-subscription-id || vars.SUBSCRIPTIONID) == '' }}
+
       - name: Test
         if: ${{ inputs.run-tests }}
         run: |
@@ -205,7 +246,7 @@ jobs:
           ALLOW_ZERO_TESTS="${{ inputs.allow-zero-tests }}"
           FILTER_ARGS=()
           FAILED=0
-          
+
           is_zero_test_output() {
             local output="$1"
             echo "$output" | grep -Eiq "Zero tests ran|No test matches the given testcase filter|No test is available in|No tests were found"
