@@ -46,6 +46,14 @@ on:
        required: false
        type: boolean
        default: true
+     checkout-ref:
+       description: Ref to check out, e.g. github.event.pull_request.head.sha. Needed only by a
+         caller using pull_request_target (which otherwise leaves github.sha resolving to the BASE
+         branch, not the pull request being tested) -- leave empty for the normal push/pull_request
+         case.
+       required: false
+       type: string
+       default: ''
    secrets:
      package-token: 
        description: The nuget token to restore the packages
@@ -55,8 +63,14 @@ env:
   CI: false
 
 permissions:
-   id-token: write
    contents: read
+   # id-token: write removed -- nothing in this job uses OIDC (no azure/login or equivalent step
+   # anywhere in this file). It was dead scope, and now that this job can run against checkout-ref
+   # (untrusted Dependabot/Renovate content), granting it unconditionally would have exposed an
+   # OIDC-minting credential to a compromised dependency's build-time script for no functional
+   # reason. If a future caller genuinely needs OIDC here, it needs the same restructuring
+   # ci_dotnet.yml needs -- a job carrying checkout-ref must never also carry id-token: write --
+   # not simply adding this back.
 
 jobs:
   build:
@@ -64,11 +78,22 @@ jobs:
    timeout-minutes: 15
 
    steps:
+     - name: Refuse checkout-ref for anyone but an allow-listed bot
+       if: ${{ inputs.checkout-ref != '' && github.actor != 'dependabot[bot]' && github.actor != 'renovate[bot]' }}
+       run: |
+         echo "::error::checkout-ref was passed ('${{ inputs.checkout-ref }}') but actor '${{ github.actor }}' is not dependabot[bot] or renovate[bot]. Refusing to check out that ref rather than trust a caller-side actor gate that this workflow cannot see or verify."
+         exit 1
+
      - name: Checkout
        uses: actions/checkout@v4
        with:
+         ref: ${{ inputs.checkout-ref || github.sha }}
          fetch-depth: 0
          fetch-tags: true
+         # A caller using pull_request_target passes checkout-ref for Dependabot/Renovate PRs, so
+         # this job runs against a dependency bump it hasn't reviewed -- nothing in this job pushes
+         # or comments, so there's no reason to leave a credential on disk for the rest of it.
+         persist-credentials: false
 
      - uses: actions/setup-node@v4
        with:

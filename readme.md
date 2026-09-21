@@ -13,7 +13,8 @@ Every repository calls these rather than copying the steps, so a fix lands once.
 
 | Workflow | Purpose |
 |---|---|
-| `ci_dotnet.yml` | Restore, build, and test a .NET solution |
+| `ci_dotnet.yml` | Restore, build, and test a .NET solution. Accepts a caller-supplied `checkout-ref` for Dependabot/Renovate PRs; carries no `id-token: write` and no Azure sign-in capability by design |
+| `ci_dotnet_azure.yml` | Same, plus Azure OIDC sign-in for fixtures that resolve `@Microsoft.KeyVault(...)` references. Never accepts `checkout-ref` -- for a repository's trusted (non-Dependabot) PR lane only |
 | `ci_react_build.yml`, `ci_react_unit_tests.yml`, `ci_react_publish.yml`, `ci_react_storybook_tests.yml` | The React library pipeline |
 | `ci_wcag_check.yml` | Accessibility check that blocks merge in React Components |
 | `spa_build.yml`, `spa_deploy.yml` | Build and deploy a single-page app |

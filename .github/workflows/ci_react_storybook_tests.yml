@@ -15,6 +15,14 @@ on:
         required: false
         type: string
         default: '["1/1"]'
+      checkout-ref:
+        description: Ref to check out, e.g. github.event.pull_request.head.sha. Needed only by a
+          caller using pull_request_target (which otherwise leaves github.sha resolving to the
+          BASE branch, not the pull request being tested) -- leave empty for the normal
+          push/pull_request case.
+        required: false
+        type: string
+        default: ''
     secrets:
       GITHUB_PACKAGE_TOKEN:
         required: false
@@ -40,7 +48,20 @@ jobs:
       STORYBOOK_SHARD: ${{ matrix.storybook-shard }}
 
     steps:
+      - name: Refuse checkout-ref for anyone but an allow-listed bot
+        if: ${{ inputs.checkout-ref != '' && github.actor != 'dependabot[bot]' && github.actor != 'renovate[bot]' }}
+        run: |
+          echo "::error::checkout-ref was passed ('${{ inputs.checkout-ref }}') but actor '${{ github.actor }}' is not dependabot[bot] or renovate[bot]. Refusing to check out that ref rather than trust a caller-side actor gate that this workflow cannot see or verify."
+          exit 1
+
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.checkout-ref || github.sha }}
+          # This job's GITHUB_TOKEN carries checks:write and pull-requests:write (see permissions
+          # above), and this workflow now sometimes runs against pull_request_target content for
+          # Dependabot/Renovate PRs -- a persisted credential would sit on disk for the rest of
+          # the job, readable by any code that runs afterward.
+          persist-credentials: false
 
       - uses: actions/setup-node@v4
         env:
