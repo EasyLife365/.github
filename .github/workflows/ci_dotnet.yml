@@ -100,6 +100,12 @@ on:
         type: string
         default: ''
 
+      checkout-ref:
+        description: 'Ref to check out, e.g. github.event.pull_request.head.sha. Needed only by a caller using pull_request_target (which otherwise leaves github.sha resolving to the BASE branch, not the pull request being tested) -- leave empty for the normal push/pull_request case.'
+        required: false
+        type: string
+        default: ''
+
     secrets:
       PACKAGE-TOKEN:
         required: true
@@ -134,9 +140,16 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
+          ref: ${{ inputs.checkout-ref || github.sha }}
           fetch-depth: 0
           fetch-tags: true
-          
+          # false because this job's GITHUB_TOKEN carries checks:write and pull-requests:write
+          # (see the permissions block above) and this workflow now sometimes runs against
+          # pull_request_target content (checkout-ref set by the caller) -- a persisted
+          # credential would sit on disk for the rest of the job, readable by any code that
+          # runs afterward, including a package's own build-time targets.
+          persist-credentials: false
+
       - name: Setup .NET
         uses: actions/setup-dotnet@v4
         with:
@@ -338,6 +351,7 @@ jobs:
           ref: main
           path: .shared-github
           token: ${{ secrets.GITHUB_PACKAGE_TOKEN || github.token }}
+          persist-credentials: false
           sparse-checkout: |
             scripts/test-summary.mjs
 

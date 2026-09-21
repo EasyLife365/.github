@@ -7,6 +7,14 @@ on:
         required: false
         type: string
         default: "24.x"
+      checkout-ref:
+        description: Ref to check out, e.g. github.event.pull_request.head.sha. Needed only by a
+          caller using pull_request_target (which otherwise leaves github.sha resolving to the
+          BASE branch, not the pull request being checked) -- leave empty for the normal
+          push/pull_request case.
+        required: false
+        type: string
+        default: ''
     secrets:
       GITHUB_PACKAGE_TOKEN:
         required: false
@@ -22,14 +30,16 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
+          ref: ${{ inputs.checkout-ref || github.sha }}
           fetch-depth: 0
+          persist-credentials: false
 
       - uses: actions/setup-node@v4
         with:
           node-version: ${{ inputs.node-version }}
 
       - name: Fetch base branch
-        if: ${{ github.event_name == 'pull_request' }}
+        if: ${{ github.event_name == 'pull_request' || github.event_name == 'pull_request_target' }}
         run: git fetch origin ${{ github.base_ref }} --depth=1
 
       - name: Checkout shared WCAG script
@@ -39,6 +49,7 @@ jobs:
           ref: main
           path: .shared-github
           token: ${{ secrets.GITHUB_PACKAGE_TOKEN || github.token }}
+          persist-credentials: false
           sparse-checkout: |
             scripts/check-wcag.mjs
 
@@ -47,7 +58,7 @@ jobs:
         run: |
           set -euo pipefail
 
-          if [ "${{ github.event_name }}" = "pull_request" ]; then
+          if [ "${{ github.event_name }}" = "pull_request" ] || [ "${{ github.event_name }}" = "pull_request_target" ]; then
             DIFF_RANGE="origin/${{ github.base_ref }}...HEAD"
           elif [ "${{ github.event_name }}" = "push" ]; then
             BEFORE_SHA="${{ github.event.before }}"

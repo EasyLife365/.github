@@ -46,6 +46,14 @@ on:
        required: false
        type: boolean
        default: true
+     checkout-ref:
+       description: Ref to check out, e.g. github.event.pull_request.head.sha. Needed only by a
+         caller using pull_request_target (which otherwise leaves github.sha resolving to the BASE
+         branch, not the pull request being tested) -- leave empty for the normal push/pull_request
+         case.
+       required: false
+       type: string
+       default: ''
    secrets:
      package-token: 
        description: The nuget token to restore the packages
@@ -67,8 +75,13 @@ jobs:
      - name: Checkout
        uses: actions/checkout@v4
        with:
+         ref: ${{ inputs.checkout-ref || github.sha }}
          fetch-depth: 0
          fetch-tags: true
+         # A caller using pull_request_target passes checkout-ref for Dependabot/Renovate PRs, so
+         # this job runs against a dependency bump it hasn't reviewed -- nothing in this job pushes
+         # or comments, so there's no reason to leave a credential on disk for the rest of it.
+         persist-credentials: false
 
      - uses: actions/setup-node@v4
        with:

@@ -11,6 +11,14 @@ on:
         required: false
         type: boolean
         default: true
+      checkout-ref:
+        description: Ref to check out, e.g. github.event.pull_request.head.sha. Needed only by a
+          caller using pull_request_target (which otherwise leaves github.sha resolving to the
+          BASE branch, not the pull request being built) -- leave empty for the normal
+          push/pull_request case.
+        required: false
+        type: string
+        default: ''
     secrets:
       GITHUB_PACKAGE_TOKEN:
         required: false
@@ -29,6 +37,9 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.checkout-ref || github.sha }}
+          persist-credentials: false
 
       - uses: actions/setup-node@v4
         env:
