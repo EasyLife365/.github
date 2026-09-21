@@ -28,7 +28,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           fetch-depth: 0
           fetch-tags: true
@@ -37,12 +37,12 @@ jobs:
         id: version
 
       - name: Setup .NET
-        uses: actions/setup-dotnet@v4
+        uses: actions/setup-dotnet@v6
         with:
           dotnet-version: ${{ inputs.dotnet-version }}
 
       - name: Cache NuGet packages
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: ~/.nuget/packages
           key: ${{ runner.os }}-nuget-${{ hashFiles('**/*.csproj') }}
@@ -56,7 +56,7 @@ jobs:
 
       - name: Setup Node.js environment
         if: ${{ inputs.use-azurite }}
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
     
       - name: Install Azurite
         if: ${{ inputs.use-azurite }}

@@ -44,16 +44,16 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Download built artifact from GitHub
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: ${{ inputs.app-artifact }}
           path: ${{ inputs.app-location }}/dist
 
       - name: Azure Login
-        uses: azure/login@v2
+        uses: azure/login@v3
         with:
           client-id: ${{ vars.CI_AADAPPID }}
           tenant-id: ${{ vars.TENANTID }}
@@ -72,7 +72,7 @@ jobs:
 
       - name: Upload merged build artifact to GitHub
         if: ${{ inputs.artifact-output != '' }}
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: ${{ inputs.artifact-output }}
           path: ${{ inputs.app-location }}/build_final

@@ -44,7 +44,7 @@ jobs:
           echo "::error::checkout-ref was passed ('${{ inputs.checkout-ref }}') but actor '${{ github.actor }}' is not dependabot[bot] or renovate[bot]. Refusing to check out that ref rather than trust a caller-side actor gate that this workflow cannot see or verify."
           exit 1
 
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           ref: ${{ inputs.checkout-ref || github.sha }}
           # This job's GITHUB_TOKEN carries checks:write and pull-requests:write (see permissions
@@ -53,7 +53,7 @@ jobs:
           # the job, readable by any code that runs afterward.
           persist-credentials: false
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         env:
           GITHUB_PACKAGE_TOKEN: ${{ secrets.GITHUB_PACKAGE_TOKEN }}
           NODE_AUTH_TOKEN: ${{ secrets.GITHUB_PACKAGE_TOKEN }}
@@ -89,7 +89,7 @@ jobs:
         if: ${{ !inputs.yarn }}
         run: npm test
 
-      - uses: dorny/test-reporter@v1
+      - uses: dorny/test-reporter@v3
         if: always() && hashFiles('junit.xml') != ''
         with:
           name: Unit Test Results
