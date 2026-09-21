@@ -71,16 +71,23 @@ jobs:
     name: Secret scan
     runs-on: ubuntu-latest
     steps:
+      - name: Refuse checkout-ref for anyone but an allow-listed bot
+        if: ${{ inputs.checkout-ref != '' && github.actor != 'dependabot[bot]' && github.actor != 'renovate[bot]' }}
+        run: |
+          echo "::error::checkout-ref was passed ('${{ inputs.checkout-ref }}') but actor '${{ github.actor }}' is not dependabot[bot] or renovate[bot]. Refusing to check out that ref rather than trust a caller-side actor gate that this workflow cannot see or verify."
+          exit 1
+
       - uses: actions/checkout@v4
         with:
+          ref: ${{ inputs.checkout-ref || github.sha }}
           fetch-depth: 0
           persist-credentials: false
 
       - name: Scan for secrets
         uses: trufflesecurity/trufflehog@main
         with:
-          base: ${{ (github.event_name == 'pull_request' && !inputs.full-history) && github.event.pull_request.base.sha || '' }}
-          head: ${{ (github.event_name == 'pull_request' && !inputs.full-history) && github.event.pull_request.head.sha || '' }}
+          base: ${{ ((github.event_name == 'pull_request' || github.event_name == 'pull_request_target') && !inputs.full-history) && github.event.pull_request.base.sha || '' }}
+          head: ${{ ((github.event_name == 'pull_request' || github.event_name == 'pull_request_target') && !inputs.full-history) && github.event.pull_request.head.sha || '' }}
           extra_args: --results=verified,unknown
 
   dotnet-dependencies:
@@ -91,6 +98,12 @@ jobs:
       GITHUB_PACKAGE_USER_NAME: github-actions
       GITHUB_PACKAGE_TOKEN: ${{ secrets.package-token }}
     steps:
+      - name: Refuse checkout-ref for anyone but an allow-listed bot
+        if: ${{ inputs.checkout-ref != '' && github.actor != 'dependabot[bot]' && github.actor != 'renovate[bot]' }}
+        run: |
+          echo "::error::checkout-ref was passed ('${{ inputs.checkout-ref }}') but actor '${{ github.actor }}' is not dependabot[bot] or renovate[bot]. Refusing to check out that ref rather than trust a caller-side actor gate that this workflow cannot see or verify."
+          exit 1
+
       - uses: actions/checkout@v4
         with:
           ref: ${{ inputs.checkout-ref || github.sha }}
@@ -118,6 +131,12 @@ jobs:
     env:
       GITHUB_PACKAGE_TOKEN: ${{ secrets.package-token }}
     steps:
+      - name: Refuse checkout-ref for anyone but an allow-listed bot
+        if: ${{ inputs.checkout-ref != '' && github.actor != 'dependabot[bot]' && github.actor != 'renovate[bot]' }}
+        run: |
+          echo "::error::checkout-ref was passed ('${{ inputs.checkout-ref }}') but actor '${{ github.actor }}' is not dependabot[bot] or renovate[bot]. Refusing to check out that ref rather than trust a caller-side actor gate that this workflow cannot see or verify."
+          exit 1
+
       - uses: actions/checkout@v4
         with:
           ref: ${{ inputs.checkout-ref || github.sha }}

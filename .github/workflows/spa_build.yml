@@ -72,6 +72,12 @@ jobs:
    timeout-minutes: 15
 
    steps:
+     - name: Refuse checkout-ref for anyone but an allow-listed bot
+       if: ${{ inputs.checkout-ref != '' && github.actor != 'dependabot[bot]' && github.actor != 'renovate[bot]' }}
+       run: |
+         echo "::error::checkout-ref was passed ('${{ inputs.checkout-ref }}') but actor '${{ github.actor }}' is not dependabot[bot] or renovate[bot]. Refusing to check out that ref rather than trust a caller-side actor gate that this workflow cannot see or verify."
+         exit 1
+
      - name: Checkout
        uses: actions/checkout@v4
        with:

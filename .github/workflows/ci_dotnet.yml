@@ -138,6 +138,27 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
+      - name: Refuse checkout-ref for anyone but an allow-listed bot
+        if: ${{ inputs.checkout-ref != '' && github.actor != 'dependabot[bot]' && github.actor != 'renovate[bot]' }}
+        run: |
+          echo "::error::checkout-ref was passed ('${{ inputs.checkout-ref }}') but actor '${{ github.actor }}' is not dependabot[bot] or renovate[bot]. Refusing to check out that ref rather than trust a caller-side actor gate that this workflow cannot see or verify."
+          exit 1
+
+      # id-token: write (see permissions above) puts an OIDC-minting credential
+      # (ACTIONS_ID_TOKEN_REQUEST_TOKEN/_URL) in every step's environment for the whole job, not
+      # just the Azure login step below -- azure-login's own `if` gates whether azure/login@v2
+      # runs, but it gates nothing about which code in this job can read those two env vars and
+      # mint an OIDC token itself. Once checkout-ref makes this job build/test real, unreviewed
+      # dependency content, that combination hands a compromised dependency a path to whatever
+      # Azure AD federated-credential trust this repository has, with azure-login: false doing
+      # nothing to stop it. Refuse the combination outright rather than rely on every caller
+      # remembering never to set both.
+      - name: Refuse checkout-ref combined with azure-login
+        if: ${{ inputs.checkout-ref != '' && inputs.azure-login }}
+        run: |
+          echo "::error::checkout-ref and azure-login cannot both be set. id-token: write exposes OIDC-minting credentials to the whole job, not only the Azure login step, so running this job against pull_request_target content (checkout-ref) while azure-login is true would hand any code in the job -- including a compromised dependency's own build-time script -- a path to mint tokens against this repository's Azure AD federated-credential trust."
+          exit 1
+
       - uses: actions/checkout@v4
         with:
           ref: ${{ inputs.checkout-ref || github.sha }}
