@@ -34,11 +34,18 @@ jobs:
           echo "::error::checkout-ref was passed ('${{ inputs.checkout-ref }}') but actor '${{ github.actor }}' is not dependabot[bot] or renovate[bot]. Refusing to check out that ref rather than trust a caller-side actor gate that this workflow cannot see or verify."
           exit 1
 
+      # persist-credentials left at its default (true), unlike the other files touched in the same
+      # change: "Fetch base branch" below runs a raw `git fetch origin <base>` and needs the
+      # credential this checkout persists to authenticate it, or it fails with "could not read
+      # Username for 'https://github.com'" -- confirmed live, this job broke for every caller the
+      # moment persist-credentials: false was added here. Safe to leave persisted: this job's own
+      # permissions are contents: read only (line 22-23) -- no checks:write or pull-requests:write
+      # to forge, unlike ci_dotnet.yml/ci_react_unit_tests.yml/ci_react_storybook_tests.yml, where
+      # persist-credentials: false actually closes something.
       - uses: actions/checkout@v4
         with:
           ref: ${{ inputs.checkout-ref || github.sha }}
           fetch-depth: 0
-          persist-credentials: false
 
       - uses: actions/setup-node@v4
         with:
