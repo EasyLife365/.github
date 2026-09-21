@@ -33,7 +33,7 @@ jobs:
           fetch-depth: 0
           fetch-tags: true
 
-      - uses: EasyLife365/get-version-action@v1.1.2
+      - uses: EasyLife365/get-version-action@v1.1.3
         id: version
 
       - name: Setup .NET
