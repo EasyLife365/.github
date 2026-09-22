@@ -96,6 +96,9 @@ jobs:
          persist-credentials: false
 
      - uses: actions/setup-node@v7
+       env:
+         GITHUB_PACKAGE_TOKEN: ${{ secrets.package-token }}
+         NODE_AUTH_TOKEN: ${{ secrets.package-token }}
        with:
          node-version: '24.x'
          registry-url: 'https://npm.pkg.github.com'
@@ -110,6 +113,7 @@ jobs:
        run: yarn install --frozen-lockfile
        env:
          GITHUB_PACKAGE_TOKEN: ${{ secrets.package-token }}
+         NODE_AUTH_TOKEN: ${{ secrets.package-token }}
 
      - uses: bahmutov/npm-install@v1
        if: ${{ !inputs.yarn }}
@@ -117,6 +121,7 @@ jobs:
          working-directory: ${{ inputs.app-location }}
        env:
          GITHUB_PACKAGE_TOKEN: ${{ secrets.package-token }}
+         NODE_AUTH_TOKEN: ${{ secrets.package-token }}
 
      - uses: EasyLife365/get-version-action@v1.1.3
        id: version
@@ -132,6 +137,7 @@ jobs:
        working-directory: ${{ inputs.app-location }}
        env:
          GITHUB_PACKAGE_TOKEN: ${{ secrets.package-token }}
+         NODE_AUTH_TOKEN: ${{ secrets.package-token }}
 
      - name: Override telemetry env variable
        if: inputs.telemetry-client-id != ''
@@ -147,6 +153,7 @@ jobs:
        working-directory: ${{ inputs.app-location }}
        env:
          GITHUB_PACKAGE_TOKEN: ${{ secrets.package-token }}
+         NODE_AUTH_TOKEN: ${{ secrets.package-token }}
 
      - name: Build (yarn)
        if: ${{ inputs.yarn }}
@@ -154,6 +161,7 @@ jobs:
        working-directory: ${{ inputs.app-location }}
        env:
          GITHUB_PACKAGE_TOKEN: ${{ secrets.package-token }}
+         NODE_AUTH_TOKEN: ${{ secrets.package-token }}
 
      - name: Upload build app artifact
        if: ${{ inputs.upload-artifact }}
