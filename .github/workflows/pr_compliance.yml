@@ -83,12 +83,12 @@ jobs:
       # neither the base commit nor the merge base, and the diff comes back empty -- which
       # would make every check silently pass.
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           fetch-depth: 0
 
       - name: Setup Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
           node-version: ${{ inputs.node-version }}
 
@@ -97,7 +97,7 @@ jobs:
       # the script and the workflow that runs it always come from the same revision -- a caller
       # pinned to an older ref keeps the behaviour it was reviewed against.
       - name: Checkout shared scripts
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           repository: ${{ github.repository_owner }}/.github
           ref: ${{ github.job_workflow_sha || 'main' }}
@@ -124,7 +124,7 @@ jobs:
       # repository under review. Checked out at the workspace root, the shared rules would be
       # inside the tree it walks.
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           path: app
 
@@ -137,7 +137,7 @@ jobs:
       # workflow yet, so nothing is currently broken by it.
       - name: Generate GitHub App token
         id: app-token
-        uses: actions/create-github-app-token@v1
+        uses: actions/create-github-app-token@v3
         with:
           app-id: 3361317
           private-key: ${{ secrets.SECOPS_TOKEN }}
@@ -145,7 +145,7 @@ jobs:
           repositories: .github-private
 
       - name: Checkout shared rules
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           repository: ${{ github.repository_owner }}/.github-private
           token: ${{ steps.app-token.outputs.token }}

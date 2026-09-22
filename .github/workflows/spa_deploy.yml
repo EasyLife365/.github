@@ -31,18 +31,18 @@ jobs:
       name: ${{ inputs.environment }}
 
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           name: ${{ inputs.app-artifact }}
           path: ./app
 
-      - uses: azure/login@v1
+      - uses: azure/login@v3
         with:
           client-id: ${{ vars.AADAPPID }}
           tenant-id: ${{ vars.TENANTID }}
           subscription-id: ${{ vars.SUBSCRIPTIONID }}
           
-      - uses: azure/CLI@v1
+      - uses: azure/CLI@v3
         with:
           inlineScript: |
               SWA_DEPLOYMENT_TOKEN=$(az staticwebapp secrets list -n ${{ inputs.app-name }} --query 'properties.apiKey' -o tsv)

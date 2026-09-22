@@ -92,13 +92,13 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           fetch-depth: 1
 
       - name: Generate GitHub App token
         id: app-token
-        uses: actions/create-github-app-token@v1
+        uses: actions/create-github-app-token@v3
         with:
           app-id: 3361317
           private-key: ${{ secrets.SECOPS_TOKEN }}
@@ -106,7 +106,7 @@ jobs:
           repositories: .github-private
 
       - name: Checkout the review standard
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           repository: ${{ github.repository_owner }}/.github-private
           token: ${{ steps.app-token.outputs.token }}

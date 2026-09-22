@@ -85,7 +85,7 @@ jobs:
          exit 1
 
      - name: Checkout
-       uses: actions/checkout@v4
+       uses: actions/checkout@v7
        with:
          ref: ${{ inputs.checkout-ref || github.sha }}
          fetch-depth: 0
@@ -95,7 +95,7 @@ jobs:
          # or comments, so there's no reason to leave a credential on disk for the rest of it.
          persist-credentials: false
 
-     - uses: actions/setup-node@v4
+     - uses: actions/setup-node@v7
        with:
          node-version: '24.x'
          registry-url: 'https://npm.pkg.github.com'
@@ -157,7 +157,7 @@ jobs:
 
      - name: Upload build app artifact
        if: ${{ inputs.upload-artifact }}
-       uses: actions/upload-artifact@v4
+       uses: actions/upload-artifact@v7
        with:
          name: ${{ inputs.app-artifact }}
          path: "${{ inputs.app-location }}/dist"

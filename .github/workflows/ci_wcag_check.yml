@@ -42,12 +42,12 @@ jobs:
       # permissions are contents: read only (line 22-23) -- no checks:write or pull-requests:write
       # to forge, unlike ci_dotnet.yml/ci_react_unit_tests.yml/ci_react_storybook_tests.yml, where
       # persist-credentials: false actually closes something.
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           ref: ${{ inputs.checkout-ref || github.sha }}
           fetch-depth: 0
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: ${{ inputs.node-version }}
 
@@ -56,7 +56,7 @@ jobs:
         run: git fetch origin ${{ github.base_ref }} --depth=1
 
       - name: Checkout shared WCAG script
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           repository: EasyLife365/.github
           ref: main

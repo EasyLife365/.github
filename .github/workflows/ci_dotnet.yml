@@ -120,7 +120,7 @@ jobs:
           echo "::error::checkout-ref was passed ('${{ inputs.checkout-ref }}') but actor '${{ github.actor }}' is not dependabot[bot] or renovate[bot]. Refusing to check out that ref rather than trust a caller-side actor gate that this workflow cannot see or verify."
           exit 1
 
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           ref: ${{ inputs.checkout-ref || github.sha }}
           fetch-depth: 0
@@ -133,12 +133,12 @@ jobs:
           persist-credentials: false
 
       - name: Setup .NET
-        uses: actions/setup-dotnet@v4
+        uses: actions/setup-dotnet@v6
         with:
           dotnet-version: ${{ inputs.dotnet-version }}
 
       - name: Cache NuGet packages
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: ~/.nuget/packages
           key: ${{ runner.os }}-nuget-${{ hashFiles('**/*.csproj') }}
@@ -179,7 +179,7 @@ jobs:
 
       - name: Setup Node.js environment
         if: ${{ (inputs.use-azurite || inputs.add-function-core-tools) && inputs.run-tests }}
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
 
       - name: Install Azure Functions Core Tools
         if: ${{ inputs.add-function-core-tools && inputs.run-tests }}
@@ -293,7 +293,7 @@ jobs:
       # scrolling past restore, build and setup.
       - name: Checkout shared test summary script
         if: ${{ always() && inputs.run-tests }}
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           repository: EasyLife365/.github
           ref: main
@@ -314,7 +314,7 @@ jobs:
       # are not now -- and after the run the logs alone cannot answer that.
       - name: Upload test results
         if: ${{ always() && inputs.run-tests }}
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: test-results-${{ github.job }}-${{ github.run_attempt }}
           path: TestResults/*.trx
@@ -336,7 +336,7 @@ jobs:
 
       - name: Upload artifacts
         if: ${{ inputs.upload-artifacts }}
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: ${{ inputs.artifact-name != '' && inputs.artifact-name || github.event.repository.name }}
           path: ${{ inputs.artifacts-path }}
