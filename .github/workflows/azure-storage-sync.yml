@@ -4,7 +4,7 @@ on:
   workflow_call:
     inputs:
       environment:
-        description: GitHub environment name (for Azure credentials)
+        description: Retained for caller compatibility; storage sync does not bind to a GitHub environment
         required: true
         type: string
       azure-storage-account:
@@ -41,7 +41,6 @@ jobs:
   sync-azure-storage:
     runs-on: ubuntu-latest
     timeout-minutes: 15
-    environment: ${{ inputs.environment }}
 
     steps:
       - name: Checkout repository
@@ -56,7 +55,7 @@ jobs:
       - name: Azure Login
         uses: azure/login@v2
         with:
-          client-id: ${{ vars.AADAPPID }}
+          client-id: ${{ vars.CI_AADAPPID }}
           tenant-id: ${{ vars.TENANTID }}
           subscription-id: ${{ vars.SUBSCRIPTIONID }}
 
