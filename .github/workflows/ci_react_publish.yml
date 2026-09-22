@@ -39,6 +39,14 @@ jobs:
           fetch-tags: true
 
       - uses: actions/setup-node@v7
+        env:
+          GITHUB_PACKAGE_TOKEN: ${{ secrets.GITHUB_PACKAGE_TOKEN }}
+          # actions/setup-node@v7 always writes "_authToken=${NODE_AUTH_TOKEN}" into the generated
+          # .npmrc, unlike v4 which only wrote it when the variable was set. It only re-exports
+          # NODE_AUTH_TOKEN to later steps if it was already present when this step ran, so it has
+          # to be set here for the yarn install path below, not only on the npm publish step further
+          # down. Matches the same fix already applied in ci_react_build.yml/ci_react_unit_tests.yml.
+          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_PACKAGE_TOKEN }}
         with:
           node-version: '24.x'
           registry-url: 'https://npm.pkg.github.com'
