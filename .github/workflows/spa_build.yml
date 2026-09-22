@@ -96,6 +96,15 @@ jobs:
          persist-credentials: false
 
      - uses: actions/setup-node@v7
+       env:
+         GITHUB_PACKAGE_TOKEN: ${{ secrets.package-token }}
+         # actions/setup-node@v7 always writes "_authToken=${NODE_AUTH_TOKEN}" into the generated
+         # .npmrc, unlike v4 which only wrote it when the variable was set. It only re-exports
+         # NODE_AUTH_TOKEN to later steps if the variable was already present when this step ran, so
+         # it has to be set here -- not on the install/build steps below -- to avoid every later
+         # yarn/npm invocation failing with "Failed to replace env in config: ${NODE_AUTH_TOKEN}".
+         # Matches the same fix already applied in ci_react_build.yml/ci_react_unit_tests.yml.
+         NODE_AUTH_TOKEN: ${{ secrets.package-token }}
        with:
          node-version: '24.x'
          registry-url: 'https://npm.pkg.github.com'
