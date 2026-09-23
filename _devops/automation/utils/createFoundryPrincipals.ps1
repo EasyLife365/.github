@@ -50,8 +50,16 @@
 # were failing. -RemoveOrphaned exists to clear exactly that state, deliberately opt-in rather
 # than automatic: an orphan is silent and inert, so there is no urgency that justifies deleting
 # on a caller's behalf without them asking for it by name.
+#
+# -WhatIf previews every mutating call (app/SP/group creation, credential create AND delete).
+# It did not always: this script ran with no CmdletBinding at all until a live -RemoveOrphaned
+# -WhatIf run deleted the two orphans above for real -- PowerShell accepted the unbound -WhatIf
+# switch without complaint and every line downstream ran unguarded. If a mutating call is ever
+# added here without wrapping it in $PSCmdlet.ShouldProcess, -WhatIf will silently stop meaning
+# anything again, exactly as it did before.
 # ============================================================================
 
+[CmdletBinding(SupportsShouldProcess = $true)]
 param(
     [string]$CiApplicationName = 'elagents-p-foundry-ci',
     [string]$DeveloperGroupName = 'EasyLife 365 Foundry Developers',
@@ -195,21 +203,28 @@ $application = $applicationJson | ConvertFrom-Json
 if ($null -eq $application -or [string]::IsNullOrWhiteSpace($application.appId)) {
     Write-Host "Creating app registration '$CiApplicationName'..." -ForegroundColor Cyan
 
-    # Single-tenant on purpose. A multi-tenant registration can be consented to
-    # in any customer tenant, and this identity is the one that reaches the
-    # Foundry account - it must never be holdable by a principal outside ours.
-    $applicationJson = az ad app create `
-        --display-name $CiApplicationName `
-        --sign-in-audience AzureADMyOrg `
-        --query "{appId:appId, id:id}" -o json --only-show-errors 2>&1
+    if ($PSCmdlet.ShouldProcess($CiApplicationName, 'Create app registration')) {
+        # Single-tenant on purpose. A multi-tenant registration can be consented to
+        # in any customer tenant, and this identity is the one that reaches the
+        # Foundry account - it must never be holdable by a principal outside ours.
+        $applicationJson = az ad app create `
+            --display-name $CiApplicationName `
+            --sign-in-audience AzureADMyOrg `
+            --query "{appId:appId, id:id}" -o json --only-show-errors 2>&1
 
-    if ($LASTEXITCODE -ne 0) {
-        Write-Host "ERROR: Could not create the app registration.`n$applicationJson" -ForegroundColor Red
-        exit 1
+        if ($LASTEXITCODE -ne 0) {
+            Write-Host "ERROR: Could not create the app registration.`n$applicationJson" -ForegroundColor Red
+            exit 1
+        }
+
+        $application = $applicationJson | ConvertFrom-Json
+        Write-Host "  ✓ Created app registration (appId $($application.appId))" -ForegroundColor Green
     }
-
-    $application = $applicationJson | ConvertFrom-Json
-    Write-Host "  ✓ Created app registration (appId $($application.appId))" -ForegroundColor Green
+    else {
+        Write-Host "  Would create app registration '$CiApplicationName'." -ForegroundColor Yellow
+        Write-Host '  Nothing downstream can be previewed without its real appId -- stopping here.' -ForegroundColor Yellow
+        exit 0
+    }
 }
 else {
     Write-Host "  ✓ App registration already exists (appId $($application.appId))" -ForegroundColor Green
@@ -230,6 +245,11 @@ if ($LASTEXITCODE -ne 0) {
 }
 
 if ([string]::IsNullOrWhiteSpace($servicePrincipalId)) {
+    if (-not $PSCmdlet.ShouldProcess($applicationClientId, 'Create service principal')) {
+        Write-Host "  Would create a service principal for appId '$applicationClientId'." -ForegroundColor Yellow
+        Write-Host '  Nothing downstream can be previewed without its real id -- stopping here.' -ForegroundColor Yellow
+        exit 0
+    }
     Write-Host "Creating service principal..." -ForegroundColor Cyan
     $servicePrincipalId = az ad sp create --id $applicationClientId --query id -o tsv --only-show-errors 2>&1
     if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($servicePrincipalId)) {
@@ -291,13 +311,18 @@ if ($orphans.Count -gt 0) {
 
     if ($RemoveOrphaned) {
         foreach ($orphan in $orphans) {
-            $result = az ad app federated-credential delete --id $applicationObjectId --federated-credential-id $orphan.id --only-show-errors 2>&1
-            if ($LASTEXITCODE -ne 0) {
-                Write-Host "ERROR: Could not delete '$($orphan.name)'.`n$result" -ForegroundColor Red
-                exit 1
+            if ($PSCmdlet.ShouldProcess($orphan.name, 'Delete orphaned federated identity credential')) {
+                $result = az ad app federated-credential delete --id $applicationObjectId --federated-credential-id $orphan.id --only-show-errors 2>&1
+                if ($LASTEXITCODE -ne 0) {
+                    Write-Host "ERROR: Could not delete '$($orphan.name)'.`n$result" -ForegroundColor Red
+                    exit 1
+                }
+                Write-Host "  ✓ Removed $($orphan.name)" -ForegroundColor Green
+                $existingSubjects = @($existingSubjects | Where-Object { $_ -cne $orphan.subject })
             }
-            Write-Host "  ✓ Removed $($orphan.name)" -ForegroundColor Green
-            $existingSubjects = @($existingSubjects | Where-Object { $_ -cne $orphan.subject })
+            else {
+                Write-Host "  Would remove $($orphan.name)" -ForegroundColor Yellow
+            }
         }
     }
     else {
@@ -319,6 +344,11 @@ foreach ($repo in $Repos) {
     # that only looks the same.
     if ($existingSubjects -ccontains $subject) {
         Write-Host "  ✓ $repo already has a credential" -ForegroundColor Green
+        continue
+    }
+
+    if (-not $PSCmdlet.ShouldProcess($subject, 'Create federated identity credential')) {
+        Write-Host "  Would create a credential for $repo -> $subject" -ForegroundColor Yellow
         continue
     }
 
@@ -366,17 +396,23 @@ if ($LASTEXITCODE -ne 0) {
 }
 
 if ([string]::IsNullOrWhiteSpace($groupId)) {
-    Write-Host "Creating security group '$DeveloperGroupName'..." -ForegroundColor Cyan
-    $groupId = az ad group create `
-        --display-name $DeveloperGroupName `
-        --mail-nickname $DeveloperGroupMailNickname `
-        --query id -o tsv --only-show-errors 2>&1
+    if ($PSCmdlet.ShouldProcess($DeveloperGroupName, 'Create security group')) {
+        Write-Host "Creating security group '$DeveloperGroupName'..." -ForegroundColor Cyan
+        $groupId = az ad group create `
+            --display-name $DeveloperGroupName `
+            --mail-nickname $DeveloperGroupMailNickname `
+            --query id -o tsv --only-show-errors 2>&1
 
-    if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($groupId)) {
-        Write-Host "ERROR: Could not create the security group.`n$groupId" -ForegroundColor Red
-        exit 1
+        if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($groupId)) {
+            Write-Host "ERROR: Could not create the security group.`n$groupId" -ForegroundColor Red
+            exit 1
+        }
+        Write-Host "  ✓ Created security group (it is empty - add developers to it)" -ForegroundColor Green
     }
-    Write-Host "  ✓ Created security group (it is empty - add developers to it)" -ForegroundColor Green
+    else {
+        Write-Host "  Would create security group '$DeveloperGroupName'." -ForegroundColor Yellow
+        $groupId = '<what-if: not yet created>'
+    }
 }
 else {
     Write-Host "  ✓ Security group already exists" -ForegroundColor Green
