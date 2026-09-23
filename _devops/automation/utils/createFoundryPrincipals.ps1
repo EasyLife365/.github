@@ -41,6 +41,15 @@
 #
 # Re-running is safe. Every step looks the object up first and only creates
 # what is missing, so this doubles as the way to add a repository later.
+#
+# It also only ever ADDS by default: a credential whose subject matches no name currently in
+# -Repos (a typo from a prior run, or a repository since removed from the list) is left in
+# place unless -RemoveOrphaned is passed. That is not a theoretical case -- two credentials
+# for the exact typos named above (EasyLife365-Notifications, EasyLife365-AgentHub) sat live,
+# unused and unnoticed, until something went looking for why those two repositories' sign-ins
+# were failing. -RemoveOrphaned exists to clear exactly that state, deliberately opt-in rather
+# than automatic: an orphan is silent and inert, so there is no urgency that justifies deleting
+# on a caller's behalf without them asking for it by name.
 # ============================================================================
 
 param(
@@ -81,7 +90,15 @@ param(
     # Skip the GitHub name check. Only for a tenant-only rehearsal where `gh` is
     # unavailable -- it trades the one safeguard that catches a typo before it
     # becomes a sign-in failure.
-    [switch]$SkipRepositoryCheck
+    [switch]$SkipRepositoryCheck,
+
+    # Delete every existing federated identity credential whose subject matches no repository
+    # currently in -Repos, before creating whatever the current list is still missing. Off by
+    # default: reconciling is always reported, deleting is opt-in. This is how a wrong subject
+    # from an earlier run (a typo, or a repository later renamed/removed) actually gets cleared,
+    # since the create step below only ever adds -- it has no way to tell "wrong" from "not
+    # ours to touch" on its own, so removal has to be a deliberate, named choice.
+    [switch]$RemoveOrphaned
 )
 
 $ErrorActionPreference = 'Stop'
@@ -228,12 +245,66 @@ $servicePrincipalId = $servicePrincipalId.Trim()
 
 # === Federated identity credentials ==========================================
 Write-Host "Reconciling federated identity credentials..." -ForegroundColor Cyan
-$existingCredentialsJson = az ad app federated-credential list --id $applicationObjectId --query "[].subject" -o json --only-show-errors 2>&1
+$existingCredentialsJson = az ad app federated-credential list --id $applicationObjectId --query "[].{id:id, name:name, subject:subject}" -o json --only-show-errors 2>&1
 if ($LASTEXITCODE -ne 0) {
     Write-Host "ERROR: Could not list federated identity credentials.`n$existingCredentialsJson" -ForegroundColor Red
     exit 1
 }
-$existingSubjects = @($existingCredentialsJson | ConvertFrom-Json)
+$existingCredentials = @($existingCredentialsJson | ConvertFrom-Json)
+$existingSubjects = @($existingCredentials | ForEach-Object { $_.subject })
+
+# Every subject a credential COULD legitimately hold for the current -Repos list. Anything
+# live that isn't in this set belongs to no repository we're being asked to trust right now --
+# a prior run's typo, or a repository since removed from the list -- not a fact this script can
+# repair by creating something; only removal (or leaving it alone) applies.
+#
+# -cnotin, not -notin: PowerShell's default comparison operators are case-INsensitive, which
+# would silently miss a stale credential that differs from an expected subject only in case --
+# exactly the mistake Test-RepositoryNames above already exists to catch on the -Repos side,
+# so the comparison here needs the same case-sensitive discipline, not a looser one.
+#
+# Only a subject matching this script's OWN shape (repo:<org>/<anything>:pull_request) is even
+# considered for orphan status. A credential of a different shape -- a future push-trigger
+# credential (repo:<org>/<repo>:ref:refs/heads/<branch>), or one added by hand for some other
+# purpose entirely -- is left alone and separately reported, never silently swept into
+# "orphan" just because this run doesn't recognise it. "Not one of ours" and "wrong" are not
+# the same claim, and only the second is safe to offer for deletion.
+$expectedSubjects = @($Repos | ForEach-Object { "repo:$Organization/${_}:pull_request" })
+$ourShapePattern = "^repo:$([regex]::Escape($Organization))/.+:pull_request$"
+$orphans = @($existingCredentials | Where-Object { $_.subject -cmatch $ourShapePattern -and $_.subject -cnotin $expectedSubjects })
+$otherShape = @($existingCredentials | Where-Object { $_.subject -cnotmatch $ourShapePattern })
+
+if ($otherShape.Count -gt 0) {
+    Write-Host ''
+    Write-Host "$($otherShape.Count) federated credential(s) have a different subject shape than repo:$Organization/<repo>:pull_request -- not evaluated as orphans, left untouched:" -ForegroundColor Yellow
+    foreach ($other in $otherShape) {
+        Write-Host "  - $($other.name)  ($($other.subject))" -ForegroundColor Yellow
+    }
+}
+
+if ($orphans.Count -gt 0) {
+    Write-Host ''
+    Write-Host "$($orphans.Count) federated credential(s) match no repository in -Repos:" -ForegroundColor Yellow
+    foreach ($orphan in $orphans) {
+        Write-Host "  - $($orphan.name)  ($($orphan.subject))" -ForegroundColor Yellow
+    }
+
+    if ($RemoveOrphaned) {
+        foreach ($orphan in $orphans) {
+            $result = az ad app federated-credential delete --id $applicationObjectId --federated-credential-id $orphan.id --only-show-errors 2>&1
+            if ($LASTEXITCODE -ne 0) {
+                Write-Host "ERROR: Could not delete '$($orphan.name)'.`n$result" -ForegroundColor Red
+                exit 1
+            }
+            Write-Host "  ✓ Removed $($orphan.name)" -ForegroundColor Green
+            $existingSubjects = @($existingSubjects | Where-Object { $_ -cne $orphan.subject })
+        }
+    }
+    else {
+        Write-Host "  Not removed -- re-run with -RemoveOrphaned to delete them." -ForegroundColor Yellow
+    }
+    Write-Host ''
+}
 
 foreach ($repo in $Repos) {
     # pr_code_review.yml runs on pull_request, so that is the subject GitHub
@@ -241,7 +312,12 @@ foreach ($repo in $Repos) {
     # and would need its own credential.
     $subject = "repo:$Organization/${repo}:pull_request"
 
-    if ($existingSubjects -contains $subject) {
+    # -ccontains: same case-sensitive discipline as the orphan check above and
+    # Test-RepositoryNames' -cne -- Entra matches a federated credential's subject against
+    # GitHub's `sub` claim verbatim, so a case-insensitive "already exists" here could skip
+    # creating the credential a repository actually needs, on the strength of an existing one
+    # that only looks the same.
+    if ($existingSubjects -ccontains $subject) {
         Write-Host "  ✓ $repo already has a credential" -ForegroundColor Green
         continue
     }
