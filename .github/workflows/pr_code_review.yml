@@ -112,12 +112,21 @@ jobs:
           owner: ${{ github.repository_owner }}
           repositories: .github-private
 
+      # actions/checkout's `path` must resolve under $GITHUB_WORKSPACE -- it has always hard-failed
+      # ("Repository path ... is not under ...") on a path outside it, which ${{ runner.temp }}
+      # always is (a sibling of the workspace, not a descendant); this is not a v7 regression,
+      # it is how every checkout version back to v2 has behaved, and this workflow had simply
+      # never run to completion before to expose it. A workspace-relative subdirectory, alongside
+      # the reviewed repository's own files, is the only shape actions/checkout accepts for a
+      # second repository -- named distinctively (not "review-standard") so it can't collide with
+      # a top-level file or folder the reviewed repository happens to track, which actions/checkout
+      # would otherwise silently delete from this job's local working copy to make room for it.
       - name: Checkout the review standard
         uses: actions/checkout@v7
         with:
           repository: ${{ github.repository_owner }}/.github-private
           token: ${{ steps.app-token.outputs.token }}
-          path: ${{ runner.temp }}/review-standard
+          path: .easylife-review-standard
           fetch-depth: 1
 
       # Fail closed. A review that runs, costs money, and applies none of the standard is worse
@@ -125,7 +134,7 @@ jobs:
       - name: Export the review standard
         shell: pwsh
         run: |
-          $source = "${{ runner.temp }}/review-standard"
+          $source = "${{ github.workspace }}/.easylife-review-standard"
           $out = "${{ runner.temp }}/review-rules.md"
 
           & "$source/scripts/agents/Export-ReviewRules.ps1" -OutputPath $out
@@ -136,6 +145,15 @@ jobs:
 
           Write-Host "Review standard: $([Math]::Round($size / 1KB, 1)) KB"
           "REVIEW_RULES=$out" | Out-File -FilePath $env:GITHUB_ENV -Append
+
+      # Remove it from the workspace before Claude Code's own directory exploration starts -- the
+      # workflow's whole point is that Claude Code reads the REVIEWED repository's CLAUDE.md/
+      # AGENTS.md as if local; a live .github-private clone sitting in that same tree is content
+      # the review step was never meant to see, not just an unused byproduct of the export step.
+      - name: Remove the review standard checkout
+        if: always()
+        shell: pwsh
+        run: Remove-Item -LiteralPath "${{ github.workspace }}/.easylife-review-standard" -Recurse -Force -ErrorAction SilentlyContinue
 
       # Mints a short-lived Entra ID token via GitHub OIDC federation -- no client secret, no
       # long-lived credential anywhere. FOUNDRY_CI_CLIENT_ID/FOUNDRY_SUBSCRIPTION_ID/TENANTID are
