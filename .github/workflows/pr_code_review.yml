@@ -25,6 +25,16 @@
 # AGENTS.md the way it does locally. That is what makes "the repository is authoritative" hold
 # in CI rather than only in principle.
 #
+# MODEL PROVIDER: Azure AI Foundry, not an Anthropic API key. Authenticates as
+# elagents-p-foundry-ci via GitHub OIDC federation (no static credential anywhere) to
+# elagents-p-ai, the Claude-on-Foundry account provisioned by
+# _devops/automation/deployment/infrastructure. That account has disableLocalAuth: true --
+# an API key is not merely unused here, it could not work against it. The federated credential's
+# subject is repo:<org>/<repo>:pull_request, so a caller must invoke this from a `pull_request`
+# trigger (already required by the job's own `if:`) and must already have a credential for its
+# repository -- see createFoundryPrincipals.ps1's -Repos list; a repository not in it needs one
+# added before its first run, or every call fails at Entra sign-in with AADSTS700213.
+#
 # Caller:
 #
 #   jobs:
@@ -58,9 +68,6 @@ on:
         type: string
         default: ''
     secrets:
-      ANTHROPIC_API_KEY:
-        description: 'Organisation-level Claude API key. An API key rather than an OAuth token: a token is tied to the subscription of whoever ran `claude setup-token`.'
-        required: true
       SECOPS_TOKEN:
         description: 'Private key of the EasyLife GitHub App, used to read the review standard from .github-private.'
         required: true
@@ -130,10 +137,24 @@ jobs:
           Write-Host "Review standard: $([Math]::Round($size / 1KB, 1)) KB"
           "REVIEW_RULES=$out" | Out-File -FilePath $env:GITHUB_ENV -Append
 
+      # Mints a short-lived Entra ID token via GitHub OIDC federation -- no client secret, no
+      # long-lived credential anywhere. FOUNDRY_CI_CLIENT_ID/FOUNDRY_SUBSCRIPTION_ID/TENANTID are
+      # org-level Actions variables, not secrets: none of the three is sensitive on its own, and a
+      # variable (unlike a secret) is visible in the run log, which is what makes a
+      # sign-in failure here debuggable instead of a mystery. The federated credential this
+      # authenticates against was created by createFoundryPrincipals.ps1 and only trusts this
+      # repository's own `pull_request` runs.
+      - name: Azure login (Foundry)
+        uses: azure/login@v2
+        with:
+          client-id: ${{ vars.FOUNDRY_CI_CLIENT_ID }}
+          tenant-id: ${{ vars.TENANTID }}
+          subscription-id: ${{ vars.FOUNDRY_SUBSCRIPTION_ID }}
+
       - name: Review
         uses: anthropics/claude-code-action@v1
         with:
-          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          use_foundry: 'true'
           plugin_marketplaces: 'https://github.com/anthropics/claude-code.git'
           plugins: 'code-review@claude-code-plugins'
           # `--comment` is what puts the findings on the pull request. Without it they go to the
@@ -144,8 +165,16 @@ jobs:
             ${{ inputs.focus }}
           # --allowedTools has to name the inline-comment tool even though the skill's own
           # frontmatter does: the action starts that MCP server only when claude_args names it.
+          # ANTHROPIC_DEFAULT_SONNET_MODEL names the one model actually deployed on
+          # elagents-p-ai (see _devops/automation/deployment/infrastructure/config/
+          # main.parameters-p.json) -- there is no "Claude Code default" on Foundry the way
+          # there is against Anthropic's own API, so this is what "leave inputs.model empty"
+          # now resolves to. inputs.model, when a caller sets it, still overrides via --model.
           claude_args: >-
             --allowedTools "mcp__github_inline_comment__create_inline_comment"
             --append-system-prompt-file "${{ env.REVIEW_RULES }}"
             --max-turns ${{ inputs.max-turns }}
             ${{ inputs.model && format('--model {0}', inputs.model) || '' }}
+        env:
+          ANTHROPIC_FOUNDRY_RESOURCE: elagents-p-ai
+          ANTHROPIC_DEFAULT_SONNET_MODEL: claude-sonnet-4-6
