@@ -26,7 +26,7 @@
             "value": "technology"
         },
         "sonnetModel": {
-            "value": "claude-sonnet-5"
+            "value": "claude-sonnet-4-6"
         },
         "haikuModel": {
             "value": ""
@@ -38,7 +38,7 @@
             "value": "1"
         },
         "sonnetCapacityK": {
-            "value": 300
+            "value": 80
         },
         "haikuCapacityK": {
             "value": 25
