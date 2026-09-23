@@ -201,9 +201,9 @@ if ($LASTEXITCODE -ne 0) {
 
 $application = $applicationJson | ConvertFrom-Json
 if ($null -eq $application -or [string]::IsNullOrWhiteSpace($application.appId)) {
-    Write-Host "Creating app registration '$CiApplicationName'..." -ForegroundColor Cyan
-
     if ($PSCmdlet.ShouldProcess($CiApplicationName, 'Create app registration')) {
+        Write-Host "Creating app registration '$CiApplicationName'..." -ForegroundColor Cyan
+
         # Single-tenant on purpose. A multi-tenant registration can be consented to
         # in any customer tenant, and this identity is the one that reaches the
         # Foundry account - it must never be holdable by a principal outside ours.
