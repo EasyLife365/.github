@@ -257,8 +257,30 @@ $existingSubjects = @($existingCredentials | ForEach-Object { $_.subject })
 # live that isn't in this set belongs to no repository we're being asked to trust right now --
 # a prior run's typo, or a repository since removed from the list -- not a fact this script can
 # repair by creating something; only removal (or leaving it alone) applies.
+#
+# -cnotin, not -notin: PowerShell's default comparison operators are case-INsensitive, which
+# would silently miss a stale credential that differs from an expected subject only in case --
+# exactly the mistake Test-RepositoryNames above already exists to catch on the -Repos side,
+# so the comparison here needs the same case-sensitive discipline, not a looser one.
+#
+# Only a subject matching this script's OWN shape (repo:<org>/<anything>:pull_request) is even
+# considered for orphan status. A credential of a different shape -- a future push-trigger
+# credential (repo:<org>/<repo>:ref:refs/heads/<branch>), or one added by hand for some other
+# purpose entirely -- is left alone and separately reported, never silently swept into
+# "orphan" just because this run doesn't recognise it. "Not one of ours" and "wrong" are not
+# the same claim, and only the second is safe to offer for deletion.
 $expectedSubjects = @($Repos | ForEach-Object { "repo:$Organization/${_}:pull_request" })
-$orphans = @($existingCredentials | Where-Object { $_.subject -notin $expectedSubjects })
+$ourShapePattern = "^repo:$([regex]::Escape($Organization))/.+:pull_request$"
+$orphans = @($existingCredentials | Where-Object { $_.subject -cmatch $ourShapePattern -and $_.subject -cnotin $expectedSubjects })
+$otherShape = @($existingCredentials | Where-Object { $_.subject -cnotmatch $ourShapePattern })
+
+if ($otherShape.Count -gt 0) {
+    Write-Host ''
+    Write-Host "$($otherShape.Count) federated credential(s) have a different subject shape than repo:$Organization/<repo>:pull_request -- not evaluated as orphans, left untouched:" -ForegroundColor Yellow
+    foreach ($other in $otherShape) {
+        Write-Host "  - $($other.name)  ($($other.subject))" -ForegroundColor Yellow
+    }
+}
 
 if ($orphans.Count -gt 0) {
     Write-Host ''
@@ -275,7 +297,7 @@ if ($orphans.Count -gt 0) {
                 exit 1
             }
             Write-Host "  ✓ Removed $($orphan.name)" -ForegroundColor Green
-            $existingSubjects = @($existingSubjects | Where-Object { $_ -ne $orphan.subject })
+            $existingSubjects = @($existingSubjects | Where-Object { $_ -cne $orphan.subject })
         }
     }
     else {
@@ -290,7 +312,12 @@ foreach ($repo in $Repos) {
     # and would need its own credential.
     $subject = "repo:$Organization/${repo}:pull_request"
 
-    if ($existingSubjects -contains $subject) {
+    # -ccontains: same case-sensitive discipline as the orphan check above and
+    # Test-RepositoryNames' -cne -- Entra matches a federated credential's subject against
+    # GitHub's `sub` claim verbatim, so a case-insensitive "already exists" here could skip
+    # creating the credential a repository actually needs, on the strength of an existing one
+    # that only looks the same.
+    if ($existingSubjects -ccontains $subject) {
         Write-Host "  ✓ $repo already has a credential" -ForegroundColor Green
         continue
     }
