@@ -112,12 +112,18 @@ jobs:
           owner: ${{ github.repository_owner }}
           repositories: .github-private
 
+      # actions/checkout@v7's `path` must resolve under $GITHUB_WORKSPACE -- it hard-fails
+      # ("Repository path ... is not under ...") on an absolute path outside it, which
+      # ${{ runner.temp }} always is (a sibling of the workspace, not a descendant). This
+      # checked out fine on older checkout versions; v7 enforces the documented constraint.
+      # A workspace-relative subdirectory, alongside the reviewed repository's own files, is
+      # the only shape actions/checkout accepts for a second repository.
       - name: Checkout the review standard
         uses: actions/checkout@v7
         with:
           repository: ${{ github.repository_owner }}/.github-private
           token: ${{ steps.app-token.outputs.token }}
-          path: ${{ runner.temp }}/review-standard
+          path: review-standard
           fetch-depth: 1
 
       # Fail closed. A review that runs, costs money, and applies none of the standard is worse
@@ -125,7 +131,7 @@ jobs:
       - name: Export the review standard
         shell: pwsh
         run: |
-          $source = "${{ runner.temp }}/review-standard"
+          $source = "${{ github.workspace }}/review-standard"
           $out = "${{ runner.temp }}/review-rules.md"
 
           & "$source/scripts/agents/Export-ReviewRules.ps1" -OutputPath $out
