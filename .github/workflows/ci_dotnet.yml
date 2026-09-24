@@ -109,6 +109,9 @@ on:
     secrets:
       PACKAGE-TOKEN:
         required: true
+      PACKAGE-TOKEN-READONLY:
+        description: 'A packages:read-only token, used instead of PACKAGE-TOKEN whenever checkout-ref is set -- that path restores real, unreviewed Dependabot/Renovate content, which should never be able to reach a credential that can also publish. Optional: falls back to PACKAGE-TOKEN if not provided, so an existing caller with no readonly token configured keeps working exactly as before, just without this extra separation until it adds one.'
+        required: false
 
 # EVERY CALLER MUST GRANT ALL THREE OF THESE, or none at all.
 #
@@ -189,7 +192,7 @@ jobs:
             dotnet restore "${{ inputs.project-name }}"
           fi
         env:
-          GITHUB_PACKAGE_TOKEN: ${{ secrets.PACKAGE-TOKEN }}
+          GITHUB_PACKAGE_TOKEN: ${{ (inputs.checkout-ref != '' && secrets.PACKAGE-TOKEN-READONLY) || secrets.PACKAGE-TOKEN }}
 
       - name: Build
         run: |
@@ -219,13 +222,13 @@ jobs:
         if: ${{ inputs.add-function-core-tools && inputs.run-tests }}
         run: npm install -g azure-functions-core-tools@4 --unsafe-perm true
         env:
-          GITHUB_PACKAGE_TOKEN: ${{ secrets.PACKAGE-TOKEN }}
+          GITHUB_PACKAGE_TOKEN: ${{ (inputs.checkout-ref != '' && secrets.PACKAGE-TOKEN-READONLY) || secrets.PACKAGE-TOKEN }}
 
       - name: Install Azurite
         if: ${{ inputs.use-azurite && inputs.run-tests }}
         run: npm install -g azurite
         env:
-          GITHUB_PACKAGE_TOKEN: ${{ secrets.PACKAGE-TOKEN }}
+          GITHUB_PACKAGE_TOKEN: ${{ (inputs.checkout-ref != '' && secrets.PACKAGE-TOKEN-READONLY) || secrets.PACKAGE-TOKEN }}
 
       - name: Run Azurite in Background
         if: ${{ inputs.use-azurite && inputs.run-tests }}
