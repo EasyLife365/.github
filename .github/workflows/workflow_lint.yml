@@ -1,0 +1,47 @@
+name: Workflow lint
+
+# Reusable workflow-syntax gate for every EasyLife 365 repository.
+#
+# Runs actionlint against every file under .github/workflows/. Deliberately its own workflow file
+# in every caller repository, never a job folded into ci.yml: GitHub parses each workflow file
+# independently, so when ci.yml itself becomes invalid this one still runs and reports it. That is
+# not hypothetical -- EasyLife365-Exchange's ci.yml carried a duplicate `pull_request_target:` key
+# in its `on:` block (added in 1fcdac22) that silently zeroed out every job in ci.yml, for every
+# push and pull request, until caught by hand. See EasyLife365/EasyLife365-Exchange#1771.
+#
+# Runs the official rhysd/actionlint Docker image, pinned to a released version tag -- not a
+# curl-pipe-bash installer, and not the third-party `actionlint` npm/wasm repackaging. The latter
+# was tried first for a local proof of concept and produced false positives: it predates GitHub's
+# `vars.*` context and flagged legitimate `${{ vars.SPA_TELEMETRY_CLIENTID_DEV }}` usage as
+# undefined. A required check that misfires on valid syntax is worse than no check at all, so this
+# uses the actively-maintained upstream binary instead.
+#
+# Caller:
+#
+#   jobs:
+#     call-workflow-lint:
+#       uses: EasyLife365/.github/.github/workflows/workflow_lint.yml@main
+#
+# Stage 0a: land as a visible, non-required check. Stage 2: add to the org ruleset once it has
+# reported cleanly on real runs across repositories -- see New-RepoBranchRulesets.ps1's warning
+# against requiring a check that has never actually reported.
+
+on:
+  workflow_call: {}
+
+permissions:
+  contents: read
+
+jobs:
+  actionlint:
+    name: actionlint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Check workflow files
+        uses: docker://rhysd/actionlint:1.7.12
+        with:
+          args: -color
