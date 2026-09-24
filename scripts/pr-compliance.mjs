@@ -424,9 +424,10 @@ if (enabled('restricted-paths')) {
 // A required check, not advisory: Stage 4 publishes prerelease packages precisely so a lane or a
 // fan-out draft can pin one before the library it depends on has actually released. That pin is
 // meant to be temporary, swapped for the released version before merge -- if it reaches main,
-// either the fan-out merged out of order or someone bypassed the swap. Scoped to EasyLife's own
-// prerelease convention, not prerelease in general: a third-party package whose own version
-// happens to contain a hyphenated word is not this repository's problem to fix.
+// either the fan-out merged out of order or someone bypassed the swap. Scoped to files THIS pull
+// request touched, the same as react-table above: a stale pin sitting untouched elsewhere in the
+// repository is not something this pull request's author can fix in scope, so it is not this
+// pull request's failure to report (design rule 1 at the top of this file).
 
 const PRERELEASE_PIN = /-(collab|mail|identity|meet|hub|approvals|notification|core|react)\d+\b|-local\b/i;
 
@@ -434,52 +435,50 @@ if (
   enabled('prerelease-pin') &&
   touchedAny(/\.csproj$|(^|\/)Directory\.Packages\.props$|(^|\/)package\.json$/i)
 ) {
-  const nugetFiles = execFileSync('git', ['ls-files', '*.csproj', 'Directory.Packages.props'], {
-    encoding: 'utf8',
-  })
-    .split('\n')
-    .filter(Boolean);
-  const npmFiles = execFileSync('git', ['ls-files', '*package.json'], { encoding: 'utf8' })
-    .split('\n')
-    .filter(Boolean)
-    .filter((p) => !p.includes('node_modules/'));
-
-  const hits = [];
-
-  for (const project of nugetFiles) {
-    if (!existsSync(project)) continue;
-    const xml = readFileSync(project, 'utf8');
-    const re = /Version="([^"]+)"/g;
-    let m;
-    while ((m = re.exec(xml)) !== null) {
-      if (PRERELEASE_PIN.test(m[1])) hits.push({ file: project, pin: m[1] });
-    }
-  }
-
-  for (const pkgFile of npmFiles) {
-    if (!existsSync(pkgFile)) continue;
-    let pkg;
+  const nugetManifests = touched.filter(
+    (p) => /\.csproj$|(^|\/)Directory\.Packages\.props$/i.test(p) && existsSync(p),
+  );
+  for (const manifest of nugetManifests) {
+    let xml;
     try {
-      pkg = JSON.parse(readFileSync(pkgFile, 'utf8'));
+      xml = readFileSync(manifest, 'utf8');
     } catch {
       continue;
     }
-    for (const section of ['dependencies', 'devDependencies', 'peerDependencies', 'resolutions']) {
-      for (const [name, version] of Object.entries(pkg[section] || {})) {
-        if (typeof version === 'string' && PRERELEASE_PIN.test(version)) {
-          hits.push({ file: pkgFile, pin: `${name}@${version}` });
-        }
+    // Matches both quote styles -- MSBuild accepts either, and a check that only recognises
+    // one is a check an author can silently step around by using the other.
+    const re = /Version=(?:"([^"]+)"|'([^']+)')/g;
+    let m;
+    while ((m = re.exec(xml)) !== null) {
+      const version = m[1] ?? m[2];
+      if (PRERELEASE_PIN.test(version)) {
+        fail(
+          'prerelease-pin',
+          `${version} is a prerelease pin. Prerelease versions are published for review in a lane, ` +
+            'never for main to depend on -- swap it for the released version before merging.',
+          manifest,
+        );
       }
     }
   }
 
-  for (const hit of hits) {
-    fail(
-      'prerelease-pin',
-      `${hit.pin} is a prerelease pin. Prerelease versions are published for review in a lane, ` +
-        'never for main to depend on -- swap it for the released version before merging.',
-      hit.file,
-    );
+  const npmManifests = touched.filter((p) => /(^|\/)package\.json$/.test(p) && existsSync(p));
+  for (const manifest of npmManifests) {
+    const pkg = readJson(manifest);
+    if (!pkg) continue;
+    for (const section of ['dependencies', 'devDependencies', 'peerDependencies', 'resolutions']) {
+      for (const [name, version] of Object.entries(pkg[section] || {})) {
+        if (typeof version === 'string' && PRERELEASE_PIN.test(version)) {
+          fail(
+            'prerelease-pin',
+            `${section}.${name} is "${version}", a prerelease pin. Prerelease versions are ` +
+              'published for review in a lane, never for main to depend on -- swap it for the ' +
+              'released version before merging.',
+            manifest,
+          );
+        }
+      }
+    }
   }
 }
 
