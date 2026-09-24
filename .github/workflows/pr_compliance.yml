@@ -45,7 +45,7 @@ on:
         type: boolean
         default: false
       skip-checks:
-        description: 'Comma-separated check names to skip: pr-title, secrets, react-table, el-package-versions, solution-membership, test-folder, branch-name, restricted-paths.'
+        description: 'Comma-separated check names to skip: pr-title, secrets, react-table, el-package-versions, solution-membership, test-folder, branch-name, restricted-paths, prerelease-pin.'
         required: false
         type: string
         default: ''
