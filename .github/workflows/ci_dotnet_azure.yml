@@ -53,6 +53,30 @@ on:
         type: boolean
         default: false
 
+      xunit-native-trx:
+        description: '--report-xunit-trx instead of --report-trx/--logger trx: xunit v3''s OWN TRX reporter. Needed when a project has no Microsoft.Testing.Extensions.TrxReport package -- that package is what --report-trx (use-mtp-logging) requires, and without it dotnet test rejects the option and reports "Zero tests ran" (exit code 5), which looks like a passing run with nothing in it rather than the wrong flag. Takes precedence over use-mtp-logging when both are true.'
+        required: false
+        type: boolean
+        default: false
+
+      test-filter-query:
+        description: 'Microsoft.Testing.Platform native query syntax, e.g. "/*/*Unit*/*/*". A project on xunit v3 / MTP selects tests this way, not with the classic VSTest --filter expression test-filter passes -- the two are different syntaxes for different runners, not two spellings of the same thing. Applied in addition to test-filter when both are set.'
+        required: false
+        type: string
+        default: ''
+
+      ignore-exit-code:
+        description: 'Passed as --ignore-exit-code <value> to dotnet test, e.g. 8 -- the code Microsoft.Testing.Platform returns when a project has zero tests matching a filter. Set this when that is expected for some projects in the solution (an integration-only project excluded by a unit-test filter) rather than a failure to catch.'
+        required: false
+        type: string
+        default: ''
+
+      free-disk-space:
+        description: 'Deletes unused preinstalled toolsets (Android SDK, GHC, Boost, Swift, the CodeQL cache) in the background while restore and build proceed, freeing roughly 20 GB. For a solution whose Release output does not fit in the runner''s ~13 GB free by default.'
+        required: false
+        type: boolean
+        default: false
+
       use-test-logger:
         description: 'Attach test logger arguments (disable for MTP setups that fail when logger args are present)'
         required: false
@@ -138,6 +162,16 @@ jobs:
           fetch-depth: 0
           fetch-tags: true
           persist-credentials: false
+
+      # Runs detached so restore and build proceed while it works. Ported from EasyLife365-
+      # Collaboration's repository-local job, which needed this because the Release output of a
+      # 42-project solution (~7.8 GB) does not fit in the runner's ~13 GB free by default -- see
+      # EasyLife365/.github#100.
+      - name: Free disk space (background)
+        if: ${{ inputs.free-disk-space }}
+        run: |
+          df -h / | tail -1
+          sudo setsid nohup bash -c 'rm -rf /usr/local/lib/android /opt/ghc /usr/local/share/boost /usr/share/swift /opt/hostedtoolcache/CodeQL /usr/local/.ghcup; docker image prune -af' > /dev/null 2>&1 &
 
       - name: Setup .NET
         uses: actions/setup-dotnet@v4
@@ -243,8 +277,10 @@ jobs:
         if: ${{ inputs.run-tests }}
         run: |
           TEST_FILTER="${{ inputs.test-filter }}"
+          FILTER_QUERY="${{ inputs.test-filter-query }}"
           ALLOW_ZERO_TESTS="${{ inputs.allow-zero-tests }}"
           FILTER_ARGS=()
+          IGNORE_EXIT_CODE_ARGS=()
           FAILED=0
 
           is_zero_test_output() {
@@ -253,7 +289,9 @@ jobs:
           }
 
           if [ "${{ inputs.use-test-logger }}" = "true" ]; then
-            if [ "${{ inputs.use-mtp-logging }}" = "true" ]; then
+            if [ "${{ inputs.xunit-native-trx }}" = "true" ]; then
+              LOGGER_ARGS=(--report-xunit-trx --results-directory ./TestResults)
+            elif [ "${{ inputs.use-mtp-logging }}" = "true" ]; then
               LOGGER_ARGS=(--report-trx --results-directory ./TestResults)
             else
               LOGGER_ARGS=(--logger trx --results-directory ./TestResults)
@@ -262,11 +300,23 @@ jobs:
             LOGGER_ARGS=(--results-directory ./TestResults)
           fi
 
+          # test-filter-query (MTP's own query syntax) and test-filter (classic VSTest) select
+          # tests in unrelated ways, not two spellings of the same flag -- both can be set at once
+          # for a caller mixing runner generations across projects.
+          if [ -n "$FILTER_QUERY" ]; then
+            echo "Using filter query: $FILTER_QUERY"
+            FILTER_ARGS+=(--filter-query "$FILTER_QUERY")
+          fi
           if [ -n "$TEST_FILTER" ]; then
             echo "Using test filter: $TEST_FILTER"
-            FILTER_ARGS=(--filter "$TEST_FILTER")
-          else
+            FILTER_ARGS+=(--filter "$TEST_FILTER")
+          fi
+          if [ -z "$FILTER_QUERY" ] && [ -z "$TEST_FILTER" ]; then
             echo "No test filter provided. Running all tests."
+          fi
+
+          if [ -n "${{ inputs.ignore-exit-code }}" ]; then
+            IGNORE_EXIT_CODE_ARGS=(--ignore-exit-code "${{ inputs.ignore-exit-code }}")
           fi
 
           set +e
@@ -290,7 +340,7 @@ jobs:
               # `gh run view --log-failed` then returns in full, setup noise included. PIPESTATUS
               # keeps dotnet's exit code rather than tee's.
               LOG=$(mktemp)
-              dotnet test "$PROJECT" --no-restore --verbosity normal "${LOGGER_ARGS[@]}" "${FILTER_ARGS[@]}" 2>&1 | tee "$LOG"
+              dotnet test "$PROJECT" --no-restore --verbosity normal "${LOGGER_ARGS[@]}" "${FILTER_ARGS[@]}" "${IGNORE_EXIT_CODE_ARGS[@]}" 2>&1 | tee "$LOG"
               exit_code=${PIPESTATUS[0]}
               output=$(cat "$LOG")
               rm -f "$LOG"
@@ -313,7 +363,7 @@ jobs:
           else
             echo "::group::Testing ${{ inputs.project-name }}"
             LOG=$(mktemp)
-            dotnet test "${{ inputs.project-name }}" --no-restore --verbosity normal "${LOGGER_ARGS[@]}" "${FILTER_ARGS[@]}" 2>&1 | tee "$LOG"
+            dotnet test "${{ inputs.project-name }}" --no-restore --verbosity normal "${LOGGER_ARGS[@]}" "${FILTER_ARGS[@]}" "${IGNORE_EXIT_CODE_ARGS[@]}" 2>&1 | tee "$LOG"
             exit_code=${PIPESTATUS[0]}
             output=$(cat "$LOG")
             rm -f "$LOG"
