@@ -201,8 +201,14 @@ jobs:
           GITHUB_PACKAGE_TOKEN: ${{ (inputs.checkout-ref != '' && secrets.PACKAGE-TOKEN-READONLY) || secrets.PACKAGE-TOKEN }}
 
       - name: Build
+        env:
+          # GitHub Actions substitutes ${{ }} into the script text before bash ever parses it, so
+          # quoting the substitution itself (e.g. BUILD_PROPERTIES="${{ inputs.build-properties }}")
+          # does not make it shell-safe -- a value containing an unescaped `"` breaks out of that
+          # assignment regardless. Routing through env: makes the runtime, not text substitution,
+          # responsible for getting the value into the shell.
+          BUILD_PROPERTIES: ${{ inputs.build-properties }}
         run: |
-          BUILD_PROPERTIES="${{ inputs.build-properties }}"
           if [ -z "${{ inputs.project-name }}" ]; then
             echo "Building all projects..."
             dotnet build --configuration Release --no-restore $BUILD_PROPERTIES
@@ -257,10 +263,17 @@ jobs:
 
       - name: Test
         if: ${{ inputs.run-tests }}
+        env:
+          # Routed through env: rather than hoisted with VAR="${{ inputs.x }}" -- that quoting does
+          # not make the substitution shell-safe, since GitHub Actions splices the value into the
+          # script text before bash parses it. Reachable only by a caller's own workflow YAML
+          # (test-filter/test-filter-query/ignore-exit-code are with:-supplied literals, never PR
+          # content), but worth closing since a caller-side mistake or a future less-trusted caller
+          # shouldn't depend on this file's own hoisting for safety.
+          TEST_FILTER: ${{ inputs.test-filter }}
+          FILTER_QUERY: ${{ inputs.test-filter-query }}
+          IGNORE_EXIT_CODE: ${{ inputs.ignore-exit-code }}
         run: |
-          TEST_FILTER="${{ inputs.test-filter }}"
-          FILTER_QUERY="${{ inputs.test-filter-query }}"
-          IGNORE_EXIT_CODE="${{ inputs.ignore-exit-code }}"
           ALLOW_ZERO_TESTS="${{ inputs.allow-zero-tests }}"
           FILTER_ARGS=()
           IGNORE_EXIT_CODE_ARGS=()
