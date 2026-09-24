@@ -47,6 +47,16 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # This repository hosts workflow_lint.yml but, until now, never called it on its own pull
+  # requests -- every OTHER repository in the estate opts into linting its workflow files;
+  # this one did not lint its own. Same if: as compliance-gate: a review submission does not
+  # change the diff, so there is nothing new to lint.
+  call-workflow-lint:
+    if: github.event_name == 'pull_request'
+    permissions:
+      contents: read
+    uses: EasyLife365/.github/.github/workflows/workflow_lint.yml@main
+
   # Named compliance-gate, not compliance, for the same reason agent-review-check is not
   # named agent-review. This job skips on review-triggered runs, and a skipped caller job
   # reports a check run under its BARE job id -- verified on this pull request, which shows
