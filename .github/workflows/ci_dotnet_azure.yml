@@ -278,6 +278,7 @@ jobs:
         run: |
           TEST_FILTER="${{ inputs.test-filter }}"
           FILTER_QUERY="${{ inputs.test-filter-query }}"
+          IGNORE_EXIT_CODE="${{ inputs.ignore-exit-code }}"
           ALLOW_ZERO_TESTS="${{ inputs.allow-zero-tests }}"
           FILTER_ARGS=()
           IGNORE_EXIT_CODE_ARGS=()
@@ -315,8 +316,8 @@ jobs:
             echo "No test filter provided. Running all tests."
           fi
 
-          if [ -n "${{ inputs.ignore-exit-code }}" ]; then
-            IGNORE_EXIT_CODE_ARGS=(--ignore-exit-code "${{ inputs.ignore-exit-code }}")
+          if [ -n "$IGNORE_EXIT_CODE" ]; then
+            IGNORE_EXIT_CODE_ARGS=(--ignore-exit-code "$IGNORE_EXIT_CODE")
           fi
 
           set +e
