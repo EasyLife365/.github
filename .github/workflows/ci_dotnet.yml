@@ -261,6 +261,15 @@ jobs:
         shell: bash
         run: azurite --skipApiVersionCheck &
 
+      # --configuration Release and $BUILD_PROPERTIES on both dotnet test invocations below: dotnet
+      # test defaults to Debug when no configuration is given, a different output directory
+      # (bin/Debug/ vs bin/Release/) than the Build step above just populated -- confirmed for real
+      # (a second "Build started", compiling with /define:...DEBUG..., inside what looked like a
+      # --no-restore test run) that omitting these silently rebuilds from scratch in Debug, in
+      # every caller, discarding whatever the Build step just produced. Harmless for a caller with
+      # no configuration-conditional code, but it would have silently defeated the one caller
+      # build-properties exists for: a build-properties value set only for a specific trigger would
+      # never reach the copy of the code actually under test.
       - name: Test
         if: ${{ inputs.run-tests }}
         env:
@@ -273,6 +282,7 @@ jobs:
           TEST_FILTER: ${{ inputs.test-filter }}
           FILTER_QUERY: ${{ inputs.test-filter-query }}
           IGNORE_EXIT_CODE: ${{ inputs.ignore-exit-code }}
+          BUILD_PROPERTIES: ${{ inputs.build-properties }}
         run: |
           ALLOW_ZERO_TESTS="${{ inputs.allow-zero-tests }}"
           FILTER_ARGS=()
@@ -336,7 +346,7 @@ jobs:
               # `gh run view --log-failed` then returns in full, setup noise included. PIPESTATUS
               # keeps dotnet's exit code rather than tee's.
               LOG=$(mktemp)
-              dotnet test "$PROJECT" --no-restore --verbosity normal "${LOGGER_ARGS[@]}" "${FILTER_ARGS[@]}" "${IGNORE_EXIT_CODE_ARGS[@]}" 2>&1 | tee "$LOG"
+              dotnet test "$PROJECT" --configuration Release --no-restore --verbosity normal "${LOGGER_ARGS[@]}" "${FILTER_ARGS[@]}" "${IGNORE_EXIT_CODE_ARGS[@]}" $BUILD_PROPERTIES 2>&1 | tee "$LOG"
               exit_code=${PIPESTATUS[0]}
               output=$(cat "$LOG")
               rm -f "$LOG"
@@ -359,7 +369,7 @@ jobs:
           else
             echo "::group::Testing ${{ inputs.project-name }}"
             LOG=$(mktemp)
-            dotnet test "${{ inputs.project-name }}" --no-restore --verbosity normal "${LOGGER_ARGS[@]}" "${FILTER_ARGS[@]}" "${IGNORE_EXIT_CODE_ARGS[@]}" 2>&1 | tee "$LOG"
+            dotnet test "${{ inputs.project-name }}" --configuration Release --no-restore --verbosity normal "${LOGGER_ARGS[@]}" "${FILTER_ARGS[@]}" "${IGNORE_EXIT_CODE_ARGS[@]}" $BUILD_PROPERTIES 2>&1 | tee "$LOG"
             exit_code=${PIPESTATUS[0]}
             output=$(cat "$LOG")
             rm -f "$LOG"
