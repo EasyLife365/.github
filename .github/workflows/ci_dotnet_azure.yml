@@ -219,14 +219,27 @@ jobs:
           dotnet publish "${{ inputs.project-name }}" --configuration Release --no-build --output "${{ inputs.artifacts-path }}"
 
       - name: Setup Node.js environment
-        if: ${{ (inputs.use-azurite || inputs.add-function-core-tools) && inputs.run-tests }}
+        if: ${{ inputs.use-azurite && inputs.run-tests }}
         uses: actions/setup-node@v4
 
+      # apt, not npm: the npm registry install 401s on any caller whose own setup (a prior
+      # actions/setup-node with registry-url, or an .npmrc committed for its own package
+      # installs) has pointed npm's default registry at GitHub Packages instead of npmjs.org --
+      # azure-functions-core-tools was never published there. Confirmed happening for real on
+      # EasyLife365-Notification since 2026-08-27; confirmed NOT reproducing on every caller (the
+      # plain npm install still succeeds where nothing has touched the npm registry config), which
+      # is exactly why it looked fine here for a while. apt has no such dependency on the calling
+      # job's own npm state, so this is a strict improvement rather than a caller-specific carve-out.
       - name: Install Azure Functions Core Tools
         if: ${{ inputs.add-function-core-tools && inputs.run-tests }}
-        run: npm install -g azure-functions-core-tools@4 --unsafe-perm true
-        env:
-          GITHUB_PACKAGE_TOKEN: ${{ secrets.PACKAGE-TOKEN }}
+        run: |
+          if ! grep -rqs "packages.microsoft.com" /etc/apt/sources.list.d/; then
+            curl -fsSL https://packages.microsoft.com/keys/microsoft.asc | gpg --dearmor | sudo tee /etc/apt/trusted.gpg.d/microsoft.gpg > /dev/null
+            echo "deb [arch=amd64] https://packages.microsoft.com/repos/microsoft-ubuntu-$(lsb_release -cs)-prod $(lsb_release -cs) main" | sudo tee /etc/apt/sources.list.d/microsoft-prod.list > /dev/null
+          fi
+          sudo apt-get update
+          sudo apt-get install -y azure-functions-core-tools-4
+          func --version
 
       - name: Install Azurite
         if: ${{ inputs.use-azurite && inputs.run-tests }}
