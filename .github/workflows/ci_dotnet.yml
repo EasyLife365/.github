@@ -23,6 +23,12 @@ on:
         required: false
         type: string
 
+      build-properties:
+        description: 'Extra MSBuild properties appended to the build invocation verbatim, e.g. "/p:DefineConstants=SOME_FLAG". For a caller that needs different compile-time behavior per trigger (e.g. a live-mode build only on push to main, a mock-mode build otherwise) -- compute the right value at the call site and pass it here rather than adding trigger-specific logic to this file. Leave empty for none.'
+        required: false
+        type: string
+        default: ''
+
       test-filter:
         required: false
         type: string
@@ -196,12 +202,13 @@ jobs:
 
       - name: Build
         run: |
+          BUILD_PROPERTIES="${{ inputs.build-properties }}"
           if [ -z "${{ inputs.project-name }}" ]; then
             echo "Building all projects..."
-            dotnet build --configuration Release --no-restore
+            dotnet build --configuration Release --no-restore $BUILD_PROPERTIES
           else
             echo "Building project: ${{ inputs.project-name }}"
-            dotnet build "${{ inputs.project-name }}" --configuration Release --no-restore
+            dotnet build "${{ inputs.project-name }}" --configuration Release --no-restore $BUILD_PROPERTIES
           fi
 
       - name: Publish
