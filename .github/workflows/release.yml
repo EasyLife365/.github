@@ -1,0 +1,107 @@
+name: Release
+
+# Cuts a version tag against the current main and publishes a GitHub Release with auto-generated
+# notes from merged PR titles since the last tag -- which is why every PR title carries its issue
+# keyword (see readme.md's Pull request review section): that's what "What's Changed" is built
+# from. This repository has no build artifact of its own to validate before tagging -- every PR
+# into main already passed actionlint and the required status checks, so a commit reaching main is
+# already the thing being released. Adapted from EasyLife365/get-version-action's release.yml,
+# minus the steps specific to validating and packaging that repo's own npm-based action.
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Release version (for example: 1.0.0 or v1.0.0)'
+        required: true
+        type: string
+      dry_run:
+        description: 'Validate only (no tag or release will be created)'
+        required: false
+        default: false
+        type: boolean
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.repository }}
+  cancel-in-progress: false
+
+jobs:
+  create-release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Validate and normalize version
+        id: version
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          INPUT_VERSION='${{ inputs.version }}'
+          NORMALIZED_VERSION="${INPUT_VERSION#v}"
+
+          if [[ ! "$NORMALIZED_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?(\+[0-9A-Za-z.-]+)?$ ]]; then
+            echo "::error::Invalid version: '$INPUT_VERSION'. Use semantic version format like 1.0.0 or v1.0.0."
+            exit 1
+          fi
+
+          RELEASE_TAG="v${NORMALIZED_VERSION}"
+          echo "Normalized release tag: $RELEASE_TAG"
+          echo "tag=$RELEASE_TAG" >> "$GITHUB_OUTPUT"
+
+      - name: Ensure tag does not already exist
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          RELEASE_TAG='${{ steps.version.outputs.tag }}'
+          git fetch --force --tags origin
+
+          if git show-ref --verify --quiet "refs/tags/${RELEASE_TAG}"; then
+            echo "::error::Tag '${RELEASE_TAG}' already exists. Choose a new version."
+            exit 1
+          fi
+
+          echo "Tag '${RELEASE_TAG}' is available."
+
+      - name: Stop after validation (dry-run)
+        if: inputs.dry_run
+        run: echo "Dry-run complete. Validation succeeded and no changes were published."
+
+      - name: Create and push tag
+        if: ${{ !inputs.dry_run }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          RELEASE_TAG='${{ steps.version.outputs.tag }}'
+          TARGET_SHA='${{ github.sha }}'
+
+          git tag "$RELEASE_TAG" "$TARGET_SHA"
+          git push origin "refs/tags/$RELEASE_TAG"
+
+          echo "Pushed tag '$RELEASE_TAG' at commit '$TARGET_SHA'."
+
+      - name: Publish GitHub Release
+        if: ${{ !inputs.dry_run }}
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const tag = '${{ steps.version.outputs.tag }}'
+            await github.rest.repos.createRelease({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              tag_name: tag,
+              name: tag,
+              target_commitish: context.sha,
+              generate_release_notes: true,
+              draft: false,
+              prerelease: tag.includes('-')
+            })
+
+            core.info(`Published release ${tag}`)

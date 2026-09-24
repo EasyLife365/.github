@@ -1,0 +1,60 @@
+name: Update major version tag
+
+# Moves the floating major tag (v1, v2, ...) to the commit a new release just tagged exactly --
+# the same convention EasyLife365/get-version-action already uses, and the one every third-party
+# GitHub Action does (actions/checkout@v4 floats across patch releases; @v4.1.7 never moves). A
+# caller that wants the latest fix in a major line pins the floating tag; a caller that wants an
+# exact, frozen point pins the full version.
+on:
+  release:
+    types: [published]
+
+permissions:
+  contents: write
+
+jobs:
+  update-major-tag:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Evaluate release tag
+        id: release
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          RELEASE_TAG='${{ github.event.release.tag_name }}'
+          if [[ "$RELEASE_TAG" =~ ^v([0-9]+)\..+ ]]; then
+            echo "major=v${BASH_REMATCH[1]}" >> "$GITHUB_OUTPUT"
+            echo "should_update=true" >> "$GITHUB_OUTPUT"
+            echo "Release '$RELEASE_TAG' is in the v${BASH_REMATCH[1]} line. Will move v${BASH_REMATCH[1]}."
+          else
+            echo "should_update=false" >> "$GITHUB_OUTPUT"
+            echo "Release '$RELEASE_TAG' does not look like a vMAJOR.MINOR.PATCH tag. Skipping."
+          fi
+
+      - name: Checkout
+        if: steps.release.outputs.should_update == 'true'
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Move major tag to release commit
+        if: steps.release.outputs.should_update == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          RELEASE_TAG='${{ github.event.release.tag_name }}'
+          MAJOR_TAG='${{ steps.release.outputs.major }}'
+          git fetch --force --tags origin
+
+          TARGET_SHA=$(git rev-list -n 1 "refs/tags/${RELEASE_TAG}" || true)
+          if [[ -z "$TARGET_SHA" ]]; then
+            echo "::error::Could not resolve commit for release tag '${RELEASE_TAG}'."
+            exit 1
+          fi
+
+          git tag -f "$MAJOR_TAG" "$TARGET_SHA"
+          git push origin "refs/tags/$MAJOR_TAG" --force
+
+          echo "Updated $MAJOR_TAG to point to '$TARGET_SHA' from '${RELEASE_TAG}'."
