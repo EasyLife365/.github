@@ -39,10 +39,16 @@ jobs:
       - name: Validate and normalize version
         id: version
         shell: bash
+        env:
+          # Routed through env: rather than spliced into the script text: GitHub's ${{ }}
+          # substitution happens before bash parses the script, so quoting the substitution
+          # (INPUT_VERSION='${{ inputs.version }}') does not make it shell-safe -- a value
+          # containing an unescaped quote breaks out of the assignment, before the semver check
+          # below ever runs. Same fix as EasyLife365/.github#102/#105.
+          INPUT_VERSION: ${{ inputs.version }}
         run: |
           set -euo pipefail
 
-          INPUT_VERSION='${{ inputs.version }}'
           NORMALIZED_VERSION="${INPUT_VERSION#v}"
 
           if [[ ! "$NORMALIZED_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?(\+[0-9A-Za-z.-]+)?$ ]]; then
