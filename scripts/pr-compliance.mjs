@@ -419,6 +419,71 @@ if (enabled('restricted-paths')) {
 }
 
 // ---------------------------------------------------------------------------------------------
+// 9. Prerelease pins on main
+//
+// A required check, not advisory: Stage 4 publishes prerelease packages precisely so a lane or a
+// fan-out draft can pin one before the library it depends on has actually released. That pin is
+// meant to be temporary, swapped for the released version before merge -- if it reaches main,
+// either the fan-out merged out of order or someone bypassed the swap. Scoped to EasyLife's own
+// prerelease convention, not prerelease in general: a third-party package whose own version
+// happens to contain a hyphenated word is not this repository's problem to fix.
+
+const PRERELEASE_PIN = /-(collab|mail|identity|meet|hub|approvals|notification|core|react)\d+\b|-local\b/i;
+
+if (
+  enabled('prerelease-pin') &&
+  touchedAny(/\.csproj$|(^|\/)Directory\.Packages\.props$|(^|\/)package\.json$/i)
+) {
+  const nugetFiles = execFileSync('git', ['ls-files', '*.csproj', 'Directory.Packages.props'], {
+    encoding: 'utf8',
+  })
+    .split('\n')
+    .filter(Boolean);
+  const npmFiles = execFileSync('git', ['ls-files', '*package.json'], { encoding: 'utf8' })
+    .split('\n')
+    .filter(Boolean)
+    .filter((p) => !p.includes('node_modules/'));
+
+  const hits = [];
+
+  for (const project of nugetFiles) {
+    if (!existsSync(project)) continue;
+    const xml = readFileSync(project, 'utf8');
+    const re = /Version="([^"]+)"/g;
+    let m;
+    while ((m = re.exec(xml)) !== null) {
+      if (PRERELEASE_PIN.test(m[1])) hits.push({ file: project, pin: m[1] });
+    }
+  }
+
+  for (const pkgFile of npmFiles) {
+    if (!existsSync(pkgFile)) continue;
+    let pkg;
+    try {
+      pkg = JSON.parse(readFileSync(pkgFile, 'utf8'));
+    } catch {
+      continue;
+    }
+    for (const section of ['dependencies', 'devDependencies', 'peerDependencies', 'resolutions']) {
+      for (const [name, version] of Object.entries(pkg[section] || {})) {
+        if (typeof version === 'string' && PRERELEASE_PIN.test(version)) {
+          hits.push({ file: pkgFile, pin: `${name}@${version}` });
+        }
+      }
+    }
+  }
+
+  for (const hit of hits) {
+    fail(
+      'prerelease-pin',
+      `${hit.pin} is a prerelease pin. Prerelease versions are published for review in a lane, ` +
+        'never for main to depend on -- swap it for the released version before merging.',
+      hit.file,
+    );
+  }
+}
+
+// ---------------------------------------------------------------------------------------------
 // Summary
 
 const rows = [
