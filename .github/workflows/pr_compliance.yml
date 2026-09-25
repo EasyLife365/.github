@@ -93,14 +93,17 @@ jobs:
           node-version: ${{ inputs.node-version }}
 
       # The script lives in this repository, not in the repository under review, so it has to be
-      # checked out separately. `job_workflow_sha` is the commit of THIS reusable workflow, so
+      # checked out separately. `workflow_sha` is the commit of THIS reusable workflow, so
       # the script and the workflow that runs it always come from the same revision -- a caller
-      # pinned to an older ref keeps the behaviour it was reviewed against.
+      # pinned to an older ref keeps the behaviour it was reviewed against. Was
+      # `github.job_workflow_sha` -- not a real context property, so this always fell through to
+      # 'main' regardless of what ref a caller actually pinned (harmless while every caller
+      # floated on @main anyway; live the moment one doesn't).
       - name: Checkout shared scripts
         uses: actions/checkout@v7
         with:
           repository: ${{ github.repository_owner }}/.github
-          ref: ${{ github.job_workflow_sha || 'main' }}
+          ref: ${{ github.workflow_sha || 'main' }}
           path: .easylife-workflows
           fetch-depth: 1
 
