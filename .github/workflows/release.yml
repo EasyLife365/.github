@@ -5,8 +5,14 @@ name: Release
 # keyword (see readme.md's Pull request review section): that's what "What's Changed" is built
 # from. This repository has no build artifact of its own to validate before tagging -- every PR
 # into main already passed actionlint and the required status checks, so a commit reaching main is
-# already the thing being released. Adapted from EasyLife365/get-version-action's release.yml,
-# minus the steps specific to validating and packaging that repo's own npm-based action.
+# already the thing being released.
+#
+# Delegates the actual tag/release/major-tag-move logic to EasyLife365/get-version-action's own
+# create-release action rather than hand-rolling it here a second time. This file's first version
+# duplicated that exact logic in bash; the two copies would have drifted the moment either one got
+# a fix the other didn't (see get-version-action#21/#22, which built create-release for exactly
+# this reason). No checkout needed at all: create-release talks to the GitHub API directly using
+# context.sha/context.repo, which GitHub Actions populates for every event without one.
 on:
   workflow_dispatch:
     inputs:
@@ -31,83 +37,7 @@ jobs:
   create-release:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout
-        uses: actions/checkout@v7
+      - uses: easylife365/get-version-action/create-release@v1
         with:
-          fetch-depth: 0
-
-      - name: Validate and normalize version
-        id: version
-        shell: bash
-        env:
-          # Routed through env: rather than spliced into the script text: GitHub's ${{ }}
-          # substitution happens before bash parses the script, so quoting the substitution
-          # (INPUT_VERSION='${{ inputs.version }}') does not make it shell-safe -- a value
-          # containing an unescaped quote breaks out of the assignment, before the semver check
-          # below ever runs. Same fix as EasyLife365/.github#102/#105.
-          INPUT_VERSION: ${{ inputs.version }}
-        run: |
-          set -euo pipefail
-
-          NORMALIZED_VERSION="${INPUT_VERSION#v}"
-
-          if [[ ! "$NORMALIZED_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?(\+[0-9A-Za-z.-]+)?$ ]]; then
-            echo "::error::Invalid version: '$INPUT_VERSION'. Use semantic version format like 1.0.0 or v1.0.0."
-            exit 1
-          fi
-
-          RELEASE_TAG="v${NORMALIZED_VERSION}"
-          echo "Normalized release tag: $RELEASE_TAG"
-          echo "tag=$RELEASE_TAG" >> "$GITHUB_OUTPUT"
-
-      - name: Ensure tag does not already exist
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          RELEASE_TAG='${{ steps.version.outputs.tag }}'
-          git fetch --force --tags origin
-
-          if git show-ref --verify --quiet "refs/tags/${RELEASE_TAG}"; then
-            echo "::error::Tag '${RELEASE_TAG}' already exists. Choose a new version."
-            exit 1
-          fi
-
-          echo "Tag '${RELEASE_TAG}' is available."
-
-      - name: Stop after validation (dry-run)
-        if: inputs.dry_run
-        run: echo "Dry-run complete. Validation succeeded and no changes were published."
-
-      - name: Create and push tag
-        if: ${{ !inputs.dry_run }}
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          RELEASE_TAG='${{ steps.version.outputs.tag }}'
-          TARGET_SHA='${{ github.sha }}'
-
-          git tag "$RELEASE_TAG" "$TARGET_SHA"
-          git push origin "refs/tags/$RELEASE_TAG"
-
-          echo "Pushed tag '$RELEASE_TAG' at commit '$TARGET_SHA'."
-
-      - name: Publish GitHub Release
-        if: ${{ !inputs.dry_run }}
-        uses: actions/github-script@v7
-        with:
-          script: |
-            const tag = '${{ steps.version.outputs.tag }}'
-            await github.rest.repos.createRelease({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              tag_name: tag,
-              name: tag,
-              target_commitish: context.sha,
-              generate_release_notes: true,
-              draft: false,
-              prerelease: tag.includes('-')
-            })
-
-            core.info(`Published release ${tag}`)
+          version: ${{ inputs.version }}
+          dry-run: ${{ inputs.dry_run }}

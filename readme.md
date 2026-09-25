@@ -32,16 +32,15 @@ against, and this repository has no history of ever cutting one. That is a real 
 means every caller adopts a change to a reusable workflow the moment it merges, with no way to
 stay on a known-good version while a fix is verified elsewhere first.
 
-**The convention, adapted from `EasyLife365/get-version-action`'s own release process** (the one
-other tagged, versioned repository in this org): semantic version tags on the whole repository,
-one version line covering every reusable workflow together rather than per-file versions, since a
-caller pins a commit of this repository, not a single file in isolation.
+**The convention**: semantic version tags on the whole repository, one version line covering every
+reusable workflow together rather than per-file versions, since a caller pins a commit of this
+repository, not a single file in isolation.
 
 - **`v1.2.3`** is an exact tag. It never moves once published — pin it for a frozen, reproducible
   reference.
-- **`v1`** is a floating tag, moved by `update-major-tag.yml` to the newest `v1.x.x` release the
-  moment it publishes. Pin it to always get the latest fix in that major line without a manual
-  bump — the same convention `actions/checkout@v4` and every other third-party Action use.
+- **`v1`** is a floating tag, moved to the newest `v1.x.x` release the moment it publishes. Pin it
+  to always get the latest fix in that major line without a manual bump — the same convention
+  `actions/checkout@v4` and every other third-party Action use.
 - A **major** bump means a breaking change to an existing input, output, or default for an
   existing caller (removing an input, changing what a default does, renaming a secret). A
   **minor** bump adds something new and backward compatible (a new optional input, a new
@@ -51,9 +50,15 @@ caller pins a commit of this repository, not a single file in isolation.
 
 **Cutting a release**: run the `Release` workflow (`workflow_dispatch`) with the version number
 (`1.2.3`, the `v` is added for you). Use `dry_run: true` first to validate without publishing.
-Release notes are auto-generated from merged PR titles since the last tag — which is why a PR
-title must carry its issue keyword (see the Pull request review section below): that keyword is
-what "What's Changed" is built from.
+The actual tag/release/major-tag-move work is delegated to
+[`EasyLife365/get-version-action`](https://github.com/EasyLife365/get-version-action)'s
+`create-release` action rather than hand-rolled here -- this file used to duplicate that logic in
+bash, which is exactly the kind of two-copies-that-drift this readme's own reusable-workflows
+philosophy exists to avoid (see the table above: "Every repository calls these rather than copying
+the steps, so a fix lands once" -- the same principle, one repository up). Release notes are
+auto-generated from merged PR titles since the last tag — which is why a PR title must carry its
+issue keyword (see the Pull request review section below): that keyword is what "What's Changed" is
+built from.
 
 **Pinning by tag is opt-in, not required yet.** No caller has been migrated off `@main` as part of
 building this convention — that is a separate, later pass, once the convention itself has a real
