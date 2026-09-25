@@ -9,14 +9,13 @@ name: PR Review
 # Without this trigger, agent-review fails once and never re-runs, however many reviews are
 # posted afterwards.
 #
-# merge_group is deliberately NOT here. Neither reusable workflow can serve a merge group
-# today: pr-compliance.mjs reads event.pull_request and exits 1 when it is absent, and
-# pr_agent_review.yml maps INPUT_PR_NUMBER from github.event.pull_request.number, which is
-# empty in a merge group. Adding the trigger ahead of that support would not make the queue
-# ready -- it would guarantee every queued pull request fails compliance and waits forever on
-# an agent-review status that is never posted. When a queue is wanted, teach both scripts to
-# resolve the pull request from github.event.merge_group.head_ref first -- a FULL ref of the
-# form refs/heads/gh-readonly-queue/main/pr-123-<sha> -- and only then add the trigger.
+# merge_group is here (#96/#125): both reusable workflows now handle it -- pr-compliance.mjs
+# reads merge_group.base_sha/head_sha for its content checks and explicitly skips the two
+# checks that need PR metadata this payload does not carry (pr-title, branch-name), and
+# pr_agent_review.yml recovers the pull request number from the queue's own temporary branch
+# name (github.event.merge_group.head_ref, shaped like
+# refs/heads/gh-readonly-queue/main/pr-123-<sha>) and posts its status against the merge
+# group's own commit rather than the pull request's head commit.
 
 on:
   pull_request:
@@ -29,6 +28,8 @@ on:
     types: [opened, synchronize, reopened, ready_for_review, edited]
   pull_request_review:
     types: [submitted]
+  merge_group:
+    types: [checks_requested]
 
 # Keyed by event as well as pull request, which is load-bearing rather than tidy: the two
 # event types do NOT run the same job set. A review-triggered run skips compliance, so if it
@@ -68,13 +69,14 @@ jobs:
   # runs emit it.
   compliance-gate:
     # Positive form on purpose. `!= 'pull_request_review'` would silently opt this job into
-    # any trigger added later -- including the merge_group the comment above tells a future
-    # author to add, which is exactly the payload pr-compliance.mjs cannot parse. Written
-    # this way, that instruction is self-enforcing.
+    # any trigger added later with no review of whether pr-compliance.mjs can actually serve
+    # it -- merge_group needed that review before being added above, and got it.
     #
     # A review submission does not change the diff, so re-running the deterministic checks on
-    # it would spend minutes to reach the same answer.
-    if: github.event_name == 'pull_request'
+    # it would spend minutes to reach the same answer. A merge_group run DOES need to run this:
+    # it is testing the pull request merged onto the current base, which can have moved since
+    # the pull_request-triggered run last checked it.
+    if: github.event_name == 'pull_request' || github.event_name == 'merge_group'
     permissions:
       contents: read
     uses: EasyLife365/.github/.github/workflows/pr_compliance.yml@main
