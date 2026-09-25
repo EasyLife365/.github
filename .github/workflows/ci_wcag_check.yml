@@ -99,7 +99,7 @@ jobs:
             exit 0
           fi
 
-          # shellcheck disable=SC2086 -- $FILES is deliberately unquoted: it's a space-separated
-          # list of changed file paths that must become separate arguments to the script, not one
-          # glued-together string.
+          # $FILES is deliberately unquoted: it's a space-separated list of changed file paths
+          # that must become separate arguments to the script, not one glued-together string.
+          # shellcheck disable=SC2086
           node .shared-github/scripts/check-wcag.mjs $FILES
