@@ -61,28 +61,51 @@ const enabled = (check) => !cfg.skipChecks.includes(check);
 
 // ---------------------------------------------------------------------------------------------
 // Pull request context
+//
+// MERGE QUEUE
+//
+// A merge_group event carries no pull_request field at all -- GitHub's own schema for the
+// payload has no such field -- so every PR-metadata check below (title, body, branch name,
+// author) has nothing to read on this trigger. The CONTENT checks (secrets, react-table,
+// el-package-versions, solution-membership, test-folder, restricted-paths, prerelease-pin) do
+// not need any of that: they read the diff and the checkout, and merge_group supplies its own
+// base_sha/head_sha for exactly that purpose -- the merge group's temporary commit, which is
+// the actual merged result the queue is testing.
+//
+// DECISION, recorded here per EasyLife365/.github#96's own acceptance criteria: the metadata
+// checks (pr-title, branch-name) are SKIPPED on merge_group, explicitly and visibly (a notice
+// naming why), not silently passed. Re-deriving them would mean fetching the pull request over
+// the GitHub API -- a capability and a token this script has never needed -- to recheck a title
+// and branch name that cannot have changed since the pull_request-triggered run that got this
+// PR queued in the first place already checked them. There is nothing to catch a second time.
 
 if (!env.GITHUB_EVENT_PATH || !existsSync(env.GITHUB_EVENT_PATH)) {
-  console.error('No GITHUB_EVENT_PATH. This script runs on a pull_request event.');
+  console.error('No GITHUB_EVENT_PATH. This script runs on a pull_request or merge_group event.');
   process.exit(1);
 }
 
 const event = JSON.parse(readFileSync(env.GITHUB_EVENT_PATH, 'utf8'));
 const pr = event.pull_request;
 
-if (!pr) {
-  console.error('Event payload has no pull_request. Trigger this on pull_request.');
+if (!pr && !event.merge_group) {
+  console.error('Event payload has no pull_request or merge_group. Trigger this on one of those.');
   process.exit(1);
 }
 
-const title = pr.title || '';
-const body = pr.body || '';
-const branch = pr.head?.ref || '';
-const baseSha = pr.base?.sha;
-const headSha = pr.head?.sha;
-const author = pr.user?.login || '';
+// The queue's own temporary branch name looks like
+// "refs/heads/gh-readonly-queue/main/pr-123-<sha>" -- used only for a friendlier log line below,
+// never for anything a check's pass/fail depends on.
+const PR_NUMBER_IN_REF = /\/pr-(\d+)-[0-9a-f]+$/;
 
-const isBot = pr.user?.type === 'Bot' || /\[bot\]$/.test(author);
+const title = pr ? pr.title || '' : '';
+const body = pr ? pr.body || '' : '';
+const branch = pr ? pr.head?.ref || '' : '';
+const baseSha = pr ? pr.base?.sha : event.merge_group.base_sha;
+const headSha = pr ? pr.head?.sha : event.merge_group.head_sha;
+const author = pr ? pr.user?.login || '' : '';
+const prNumber = pr ? pr.number : PR_NUMBER_IN_REF.exec(event.merge_group.head_ref || '')?.[1];
+
+const isBot = pr ? pr.user?.type === 'Bot' || /\[bot\]$/.test(author) : false;
 
 // ---------------------------------------------------------------------------------------------
 // Changed files
@@ -123,8 +146,12 @@ const touchedSet = new Set(touched);
 
 const touchedAny = (pattern) => touched.some((p) => pattern.test(p));
 
-console.log(`Pull request #${pr.number} by ${author}${isBot ? ' (bot)' : ''}`);
-console.log(`Branch: ${branch}`);
+console.log(
+  pr
+    ? `Pull request #${pr.number} by ${author}${isBot ? ' (bot)' : ''}`
+    : `Merge group for pull request #${prNumber ?? '?'} (${event.merge_group.head_ref})`,
+);
+console.log(`Branch: ${branch || '(none -- merge group)'}`);
 console.log(`Changed files: ${files.length} (${added.length} added)`);
 console.log('');
 
@@ -151,7 +178,14 @@ console.log('');
 const KEYWORD_IN_BODY = /\b(Closes|Fixes|Associates|Resolves)\s+(?:[\w.-]+\/[\w.-]+)?#\d+/i;
 const KEYWORD_SUFFIX = /\.\s*(Closes|Fixes|Associates)\s+#\d+\.?\s*$/;
 
-if (enabled('pr-title') && !isBot) {
+if (enabled('pr-title') && !pr) {
+  note(
+    'pr-title',
+    'Skipped under merge_group -- the pull_request-triggered run already checked this before ' +
+      'the pull request entered the queue, and nothing about its title or body changes by ' +
+      'entering it.',
+  );
+} else if (enabled('pr-title') && !isBot) {
   if (!KEYWORD_IN_BODY.test(body)) {
     fail(
       'pr-title',
@@ -374,7 +408,14 @@ if (enabled('test-folder') && cfg.testFolderPolicy === 'unit-integration') {
 
 const BRANCH_OK = /^[a-z][a-z-]*\/(pr\d+|[A-Za-z0-9._-]*\d+)(-\d+)?$/;
 
-if (enabled('branch-name') && !isBot && branch && !BRANCH_OK.test(branch)) {
+if (enabled('branch-name') && !pr) {
+  note(
+    'branch-name',
+    'Skipped under merge_group -- the pull_request-triggered run already checked this before ' +
+      'the pull request entered the queue, and the queue\'s own temporary branch name is not ' +
+      'the pull request\'s real branch.',
+  );
+} else if (enabled('branch-name') && !isBot && branch && !BRANCH_OK.test(branch)) {
   const message =
     `Branch "${branch}" does not follow the convention: <type>/pr<issue> in the same ` +
     'repository, or <type>/<repositoryName><issue> across repositories -- issue #456 becomes ' +

@@ -18,6 +18,16 @@
 #       with:
 #         solution-file: EL.Core.sln
 #       secrets: inherit
+#
+# MERGE QUEUE: a caller using a merge queue must also trigger this job on merge_group (types:
+# [checks_requested]) and drop any `if: github.event_name == 'pull_request'` guard on the job
+# that would otherwise skip it on that trigger -- a caller job that CAN be skipped reports its
+# check run under its bare job id, and GitHub counts a skipped check as passing, which would let
+# the queue merge without this check ever actually running. pr-compliance.mjs itself already
+# handles a merge_group event: it reads merge_group.base_sha/head_sha for the content checks
+# (secrets, react-table, solution-membership, etc.) and skips only the two PR-metadata checks
+# (pr-title, branch-name) with an explicit notice, since neither can have changed since the
+# pull_request-triggered run that got the pull request queued in the first place.
 
 name: PR compliance
 

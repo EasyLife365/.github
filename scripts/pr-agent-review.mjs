@@ -38,6 +38,24 @@
 // fail against the wrong commit. An explicit status names the SHA and removes the question.
 //
 // Configuration arrives as environment variables from .github/workflows/pr_agent_review.yml.
+//
+// MERGE QUEUE
+//
+// A merge_group event carries no `pull_request` at all -- GitHub's own schema for the payload
+// has no such field -- so github.event.pull_request.number is empty and INPUT_PR_NUMBER arrives
+// blank. The pull request number is recoverable from the queue's own temporary branch name
+// instead: github.event.merge_group.head_ref looks like
+// "refs/heads/gh-readonly-queue/main/pr-123-<sha>". PR_NUMBER_IN_REF below extracts it.
+//
+// Once resolved, the review lookup itself is unchanged: it still checks for a marker against
+// the PR's real head commit (pull.head.sha, fetched by number), which is what /el-review
+// actually reviewed. What changes is where the ANSWER gets posted: a merge queue evaluates
+// required checks against the merge group's own temporary commit, not the PR's head commit --
+// GitHub's own docs describe GITHUB_SHA as "SHA of the merge group" for this event -- so
+// postStatus targets GITHUB_SHA instead of the PR's head commit specifically when this run was
+// triggered by merge_group. For every other trigger this is a no-op: GITHUB_EVENT_NAME is not
+// 'merge_group', so the PR's own head commit is used exactly as before.
+const PR_NUMBER_IN_REF = /\/pr-(\d+)-[0-9a-f]+$/;
 
 import { appendFileSync } from 'node:fs';
 
@@ -48,13 +66,33 @@ const cfg = {
   repository: env.GITHUB_REPOSITORY,
   apiUrl: env.GITHUB_API_URL || 'https://api.github.com',
   prNumber: (env.INPUT_PR_NUMBER || '').trim(),
+  mergeGroupHeadRef: (env.INPUT_MERGE_GROUP_HEAD_REF || '').trim(),
   statusContext: (env.INPUT_STATUS_CONTEXT || 'agent-review').trim(),
   exemptAuthors: (env.INPUT_EXEMPT_AUTHORS || 'dependabot[bot],renovate[bot]')
     .split(',').map((s) => s.trim().toLowerCase()).filter(Boolean),
 };
 
+if (!cfg.prNumber && cfg.mergeGroupHeadRef) {
+  const match = PR_NUMBER_IN_REF.exec(cfg.mergeGroupHeadRef);
+  if (match) {
+    cfg.prNumber = match[1];
+  } else {
+    console.error(
+      `::error::Could not extract a pull request number from merge_group.head_ref ` +
+        `"${cfg.mergeGroupHeadRef}". Expected it to end in "/pr-<number>-<sha>" -- if GitHub has ` +
+        `changed this format, PR_NUMBER_IN_REF above needs updating.`,
+    );
+    process.exit(1);
+  }
+}
+
+// The commit the merge queue actually evaluates required checks against. Empty for every
+// trigger except merge_group, in which case it's the merge group's own temporary commit -- see
+// the comment above.
+const mergeGroupSha = env.GITHUB_EVENT_NAME === 'merge_group' ? (env.GITHUB_SHA || '').trim() : '';
+
 if (!cfg.token || !cfg.repository || !cfg.prNumber) {
-  console.error('::error::GITHUB_TOKEN, GITHUB_REPOSITORY and INPUT_PR_NUMBER are all required.');
+  console.error('::error::GITHUB_TOKEN, GITHUB_REPOSITORY and a resolvable PR number are all required.');
   process.exit(1);
 }
 
@@ -170,11 +208,16 @@ const pull = await api(`/repos/${owner}/${repo}/pulls/${cfg.prNumber}`);
 const headSha = pull.head.sha;
 const author = (pull.user?.login || '').toLowerCase();
 
+// Where the status is POSTED, as distinct from headSha (what was actually reviewed, used for
+// every marker-matching decision below). Identical to headSha outside a merge queue -- see the
+// merge-queue comment near the top of this file.
+const statusSha = mergeGroupSha || headSha;
+
 // Drafts are not reviewed, so requiring a review of one would block work that is not asking
 // to merge. The check reports success rather than skipping: a required check that never
 // reports leaves the pull request stuck in "Expected" forever.
 if (pull.draft) {
-  await postStatus(headSha, 'success', 'Draft - agent review not required yet');
+  await postStatus(statusSha, 'success', 'Draft - agent review not required yet');
   console.log('Draft pull request; agent review not required.');
   process.exit(0);
 }
@@ -182,7 +225,7 @@ if (pull.draft) {
 // Bump and dependency pull requests are exempt by design -- CI proves them, and a review of a
 // version-number diff is spend with nothing to find.
 if (cfg.exemptAuthors.includes(author)) {
-  await postStatus(headSha, 'success', `Exempt author (${author})`);
+  await postStatus(statusSha, 'success', `Exempt author (${author})`);
   console.log(`Author ${author} is exempt from agent review.`);
   process.exit(0);
 }
@@ -252,7 +295,7 @@ if (matched.length > 0) {
 
   // Naming the reviewer is the point of allowing self-review: an approver can see who ran it.
   const who = best.by ? ` by @${best.by}` : '';
-  await postStatus(headSha, 'success', detail ? `Reviewed${who} (${detail})` : `Reviewed${who}`);
+  await postStatus(statusSha, 'success', detail ? `Reviewed${who} (${detail})` : `Reviewed${who}`);
   console.log(`Agent review found for ${headSha}${who}${detail ? ` -- ${detail}` : ''}.`);
   if (best.by && best.by.toLowerCase() === author) {
     console.log('Note: the marker was posted by the pull request author. That is allowed, and the');
@@ -281,7 +324,7 @@ const description = stale.length > 0
     ? `Reviewer requested before any review - run /el-review on ${headSha.slice(0, 7)}`
     : `No agent review for ${headSha.slice(0, 7)} - run /el-review`;
 
-await postStatus(headSha, 'failure', description);
+await postStatus(statusSha, 'failure', description);
 
 // A warning, not an error: the job did what it was asked to do. The red lives in the commit
 // status, where it belongs and where the ruleset reads it.
