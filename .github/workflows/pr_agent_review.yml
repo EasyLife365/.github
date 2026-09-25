@@ -110,16 +110,23 @@ jobs:
     timeout-minutes: 5
 
     steps:
-      # The script lives in this repository, not the one under review. workflow_sha pins it
-      # to the same revision as this workflow, so a caller on an older ref keeps the behaviour
-      # it was reviewed against. Was `github.job_workflow_sha` -- not a real context property,
-      # so this always fell through to 'main' regardless of what ref a caller actually pinned
-      # (harmless while every caller floated on @main anyway; live the moment one doesn't).
+      # The script lives in this repository, not the one under review. `job.workflow_sha`/
+      # `job.workflow_repository` pin it to the same revision as this workflow file specifically,
+      # so a caller on an older ref keeps the behaviour it was reviewed against.
+      #
+      # This was `github.workflow_sha` with `github.repository_owner`/.github, which is wrong for
+      # any caller other than this repository itself: in a reusable-workflow job, `github.*`
+      # stays pinned to the CALLER's workflow and repository, not this file's. For every real
+      # caller that resolved to a commit SHA in the CALLER's own repo, which does not exist in
+      # this one -- so the checkout would have failed the moment a caller pinned a version instead
+      # of floating on @main, taking the required agent-review check down with it.
+      # `job.workflow_sha`/`job.workflow_repository` exist specifically for this case: they name
+      # the reusable workflow's own file regardless of who calls it.
       - name: Checkout shared scripts
         uses: actions/checkout@v7
         with:
-          repository: ${{ github.repository_owner }}/.github
-          ref: ${{ github.workflow_sha || 'main' }}
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
           path: .easylife-workflows
           fetch-depth: 1
 
