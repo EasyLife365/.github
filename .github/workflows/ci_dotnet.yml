@@ -149,8 +149,11 @@ jobs:
     steps:
       - name: Refuse checkout-ref for anyone but an allow-listed bot
         if: ${{ inputs.checkout-ref != '' && github.actor != 'dependabot[bot]' && github.actor != 'renovate[bot]' }}
+        env:
+          CHECKOUT_REF: ${{ inputs.checkout-ref }}
+          ACTOR: ${{ github.actor }}
         run: |
-          echo "::error::checkout-ref was passed ('${{ inputs.checkout-ref }}') but actor '${{ github.actor }}' is not dependabot[bot] or renovate[bot]. Refusing to check out that ref rather than trust a caller-side actor gate that this workflow cannot see or verify."
+          echo "::error::checkout-ref was passed ('$CHECKOUT_REF') but actor '$ACTOR' is not dependabot[bot] or renovate[bot]. Refusing to check out that ref rather than trust a caller-side actor gate that this workflow cannot see or verify."
           exit 1
 
       - uses: actions/checkout@v7
@@ -189,16 +192,17 @@ jobs:
             ${{ runner.os }}-nuget-
 
       - name: Install dependencies
+        env:
+          PROJECT_NAME: ${{ inputs.project-name }}
+          GITHUB_PACKAGE_TOKEN: ${{ (inputs.checkout-ref != '' && secrets.PACKAGE-TOKEN-READONLY) || secrets.PACKAGE-TOKEN }}
         run: |
-          if [ -z "${{ inputs.project-name }}" ]; then
+          if [ -z "$PROJECT_NAME" ]; then
             echo "Restoring all projects..."
             dotnet restore
           else
-            echo "Restoring project: ${{ inputs.project-name }}"
-            dotnet restore "${{ inputs.project-name }}"
+            echo "Restoring project: $PROJECT_NAME"
+            dotnet restore "$PROJECT_NAME"
           fi
-        env:
-          GITHUB_PACKAGE_TOKEN: ${{ (inputs.checkout-ref != '' && secrets.PACKAGE-TOKEN-READONLY) || secrets.PACKAGE-TOKEN }}
 
       - name: Build
         env:
@@ -208,8 +212,9 @@ jobs:
           # assignment regardless. Routing through env: makes the runtime, not text substitution,
           # responsible for getting the value into the shell.
           BUILD_PROPERTIES: ${{ inputs.build-properties }}
+          PROJECT_NAME: ${{ inputs.project-name }}
         run: |
-          if [ -z "${{ inputs.project-name }}" ]; then
+          if [ -z "$PROJECT_NAME" ]; then
             echo "Building all projects..."
             # $BUILD_PROPERTIES is deliberately unquoted: may hold multiple space-separated
             # MSBuild properties (e.g. "-p:A=1 -p:B=2") that must become separate dotnet
@@ -217,21 +222,24 @@ jobs:
             # shellcheck disable=SC2086
             dotnet build --configuration Release --no-restore $BUILD_PROPERTIES
           else
-            echo "Building project: ${{ inputs.project-name }}"
+            echo "Building project: $PROJECT_NAME"
             # $BUILD_PROPERTIES deliberately unquoted, see above.
             # shellcheck disable=SC2086
-            dotnet build "${{ inputs.project-name }}" --configuration Release --no-restore $BUILD_PROPERTIES
+            dotnet build "$PROJECT_NAME" --configuration Release --no-restore $BUILD_PROPERTIES
           fi
 
       - name: Publish
         if: ${{ inputs.upload-artifacts }}
+        env:
+          PROJECT_NAME: ${{ inputs.project-name }}
+          ARTIFACTS_PATH: ${{ inputs.artifacts-path }}
         run: |
-          if [ -z "${{ inputs.project-name }}" ]; then
+          if [ -z "$PROJECT_NAME" ]; then
             echo "::error::project-name is required when upload-artifacts is true."
             exit 1
           fi
-          echo "Publishing project: ${{ inputs.project-name }}"
-          dotnet publish "${{ inputs.project-name }}" --configuration Release --no-build --output "${{ inputs.artifacts-path }}"
+          echo "Publishing project: $PROJECT_NAME"
+          dotnet publish "$PROJECT_NAME" --configuration Release --no-build --output "$ARTIFACTS_PATH"
 
       - name: Setup Node.js environment
         if: ${{ inputs.use-azurite && inputs.run-tests }}
@@ -289,6 +297,7 @@ jobs:
           FILTER_QUERY: ${{ inputs.test-filter-query }}
           IGNORE_EXIT_CODE: ${{ inputs.ignore-exit-code }}
           BUILD_PROPERTIES: ${{ inputs.build-properties }}
+          PROJECT_NAME: ${{ inputs.project-name }}
         run: |
           ALLOW_ZERO_TESTS="${{ inputs.allow-zero-tests }}"
           FILTER_ARGS=()
@@ -332,7 +341,12 @@ jobs:
           fi
 
           set +e
-          if [ -z "${{ inputs.project-name }}" ]; then
+          if [ -z "$PROJECT_NAME" ]; then
+            # --no-build below relies on the Build step's bare `dotnet build` (no project-name)
+            # having already built every project this discovers -- true for every caller checked
+            # today (one solution/*.sln[x] at repo root covering every *test*.csproj), but not a
+            # guarantee this workflow enforces. A caller with a test project outside its main
+            # solution would need to fix that, not disable --no-build.
             echo "Discovering test projects..."
             mapfile -t TEST_PROJECTS < <(find . -iname "*test*.csproj" | sort)
 
@@ -354,7 +368,9 @@ jobs:
               LOG=$(mktemp)
               # $BUILD_PROPERTIES deliberately unquoted, see the Build step above.
               # shellcheck disable=SC2086
-              dotnet test "$PROJECT" --configuration Release --no-restore --verbosity normal "${LOGGER_ARGS[@]}" "${FILTER_ARGS[@]}" "${IGNORE_EXIT_CODE_ARGS[@]}" $BUILD_PROPERTIES 2>&1 | tee "$LOG"
+              # --no-build: Release now matches between Build and this step (see the comment
+              # above), so re-evaluating here is a pure waste, not a correctness need.
+              dotnet test "$PROJECT" --configuration Release --no-build --no-restore --verbosity normal "${LOGGER_ARGS[@]}" "${FILTER_ARGS[@]}" "${IGNORE_EXIT_CODE_ARGS[@]}" $BUILD_PROPERTIES 2>&1 | tee "$LOG"
               exit_code=${PIPESTATUS[0]}
               output=$(cat "$LOG")
               rm -f "$LOG"
@@ -375,20 +391,22 @@ jobs:
               exit 1
             fi
           else
-            echo "::group::Testing ${{ inputs.project-name }}"
+            echo "::group::Testing $PROJECT_NAME"
             LOG=$(mktemp)
             # $BUILD_PROPERTIES deliberately unquoted, see the Build step above.
             # shellcheck disable=SC2086
-            dotnet test "${{ inputs.project-name }}" --configuration Release --no-restore --verbosity normal "${LOGGER_ARGS[@]}" "${FILTER_ARGS[@]}" "${IGNORE_EXIT_CODE_ARGS[@]}" $BUILD_PROPERTIES 2>&1 | tee "$LOG"
+            # --no-build: Build and Test target the identical project here, both at Release, so
+            # re-evaluating is a pure waste, not a correctness need.
+            dotnet test "$PROJECT_NAME" --configuration Release --no-build --no-restore --verbosity normal "${LOGGER_ARGS[@]}" "${FILTER_ARGS[@]}" "${IGNORE_EXIT_CODE_ARGS[@]}" $BUILD_PROPERTIES 2>&1 | tee "$LOG"
             exit_code=${PIPESTATUS[0]}
             output=$(cat "$LOG")
             rm -f "$LOG"
             echo "::endgroup::"
             if [ "$exit_code" -ne 0 ]; then
               if [ "$ALLOW_ZERO_TESTS" = "true" ] && is_zero_test_output "$output"; then
-                echo "::warning::Zero tests ran for ${{ inputs.project-name }}; continuing."
+                echo "::warning::Zero tests ran for $PROJECT_NAME; continuing."
               else
-                echo "::error::Tests failed in ${{ inputs.project-name }}"
+                echo "::error::Tests failed in $PROJECT_NAME"
                 exit 1
               fi
             fi
@@ -418,9 +436,10 @@ jobs:
       - name: Summarise test results
         if: ${{ always() && inputs.run-tests }}
         shell: bash
+        env:
+          TITLE: ${{ inputs.project-name != '' && inputs.project-name || github.event.repository.name }}
         run: |
-          node .shared-github/scripts/test-summary.mjs ./TestResults \
-            --title "${{ inputs.project-name != '' && inputs.project-name || github.event.repository.name }}"
+          node .shared-github/scripts/test-summary.mjs ./TestResults --title "$TITLE"
 
       # Keep the TRX. It is what makes two runs comparable -- which tests were executed then and
       # are not now -- and after the run the logs alone cannot answer that.
