@@ -359,7 +359,7 @@ jobs:
               output=$(cat "$LOG")
               rm -f "$LOG"
               echo "::endgroup::"
-              if [ $exit_code -ne 0 ]; then
+              if [ "$exit_code" -ne 0 ]; then
                 if [ "$ALLOW_ZERO_TESTS" = "true" ] && is_zero_test_output "$output"; then
                   echo "::warning::Zero tests ran for $PROJECT; continuing."
                 else
@@ -384,7 +384,7 @@ jobs:
             output=$(cat "$LOG")
             rm -f "$LOG"
             echo "::endgroup::"
-            if [ $exit_code -ne 0 ]; then
+            if [ "$exit_code" -ne 0 ]; then
               if [ "$ALLOW_ZERO_TESTS" = "true" ] && is_zero_test_output "$output"; then
                 echo "::warning::Zero tests ran for ${{ inputs.project-name }}; continuing."
               else
