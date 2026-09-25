@@ -37,10 +37,12 @@ jobs:
           echo "MINOR=$MINOR"
           echo "PATCH=$PATCH"
 
-          echo "tag=$TAG" >> $GITHUB_OUTPUT
-          echo "major=$MAJOR" >> $GITHUB_OUTPUT
-          echo "minor=$MINOR" >> $GITHUB_OUTPUT
-          echo "patch=$PATCH" >> $GITHUB_OUTPUT
+          {
+            echo "tag=$TAG"
+            echo "major=$MAJOR"
+            echo "minor=$MINOR"
+            echo "patch=$PATCH"
+          } >> "$GITHUB_OUTPUT"
 
       - name: Determine branch name for maintenance
         id: branch_info
@@ -52,8 +54,10 @@ jobs:
           BRANCH_NAME="v$NEW_MAJOR.$NEW_MINOR.x"
 
           echo "Creating maintenance branch: $BRANCH_NAME from tag: $NEW_TAG"
-          echo "branch_name=$BRANCH_NAME" >> $GITHUB_OUTPUT
-          echo "source_tag=$NEW_TAG" >> $GITHUB_OUTPUT
+          {
+            echo "branch_name=$BRANCH_NAME"
+            echo "source_tag=$NEW_TAG"
+          } >> "$GITHUB_OUTPUT"
 
       - name: Check if branch already exists
         id: branch_check

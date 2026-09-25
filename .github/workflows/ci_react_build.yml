@@ -22,6 +22,9 @@ on:
     secrets:
       GITHUB_PACKAGE_TOKEN:
         required: false
+      GITHUB_PACKAGE_TOKEN_READONLY:
+        description: 'A read:packages-only token, used instead of GITHUB_PACKAGE_TOKEN whenever checkout-ref is set -- that path installs real, unreviewed Dependabot/Renovate content, and npm/yarn install can run arbitrary postinstall scripts from it, which should never be able to reach a credential that can also publish. Optional: falls back to GITHUB_PACKAGE_TOKEN if not provided, so an existing caller with no readonly token configured keeps working exactly as before, just without this extra separation until it adds one.'
+        required: false
 
 permissions:
   contents: read
@@ -49,8 +52,8 @@ jobs:
 
       - uses: actions/setup-node@v7
         env:
-          GITHUB_PACKAGE_TOKEN: ${{ secrets.GITHUB_PACKAGE_TOKEN }}
-          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_PACKAGE_TOKEN }}
+          GITHUB_PACKAGE_TOKEN: ${{ (inputs.checkout-ref != '' && secrets.GITHUB_PACKAGE_TOKEN_READONLY) || secrets.GITHUB_PACKAGE_TOKEN }}
+          NODE_AUTH_TOKEN: ${{ (inputs.checkout-ref != '' && secrets.GITHUB_PACKAGE_TOKEN_READONLY) || secrets.GITHUB_PACKAGE_TOKEN }}
         with:
           node-version: ${{ inputs.node-version }}
           cache: ${{ inputs.yarn && 'yarn' || 'npm' }}
@@ -65,22 +68,22 @@ jobs:
         if: ${{ inputs.yarn }}
         run: yarn install --frozen-lockfile
         env:
-          GITHUB_PACKAGE_TOKEN: ${{ secrets.GITHUB_PACKAGE_TOKEN }}
+          GITHUB_PACKAGE_TOKEN: ${{ (inputs.checkout-ref != '' && secrets.GITHUB_PACKAGE_TOKEN_READONLY) || secrets.GITHUB_PACKAGE_TOKEN }}
 
       - name: Install dependencies
         if: ${{ !inputs.yarn }}
         run: npm ci
         env:
-          GITHUB_PACKAGE_TOKEN: ${{ secrets.GITHUB_PACKAGE_TOKEN }}
+          GITHUB_PACKAGE_TOKEN: ${{ (inputs.checkout-ref != '' && secrets.GITHUB_PACKAGE_TOKEN_READONLY) || secrets.GITHUB_PACKAGE_TOKEN }}
 
       - name: Run build gates (yarn)
         if: ${{ inputs.yarn }}
         run: yarn build
         env:
-          GITHUB_PACKAGE_TOKEN: ${{ secrets.GITHUB_PACKAGE_TOKEN }}
+          GITHUB_PACKAGE_TOKEN: ${{ (inputs.checkout-ref != '' && secrets.GITHUB_PACKAGE_TOKEN_READONLY) || secrets.GITHUB_PACKAGE_TOKEN }}
 
       - name: Run build gates (npm)
         if: ${{ !inputs.yarn }}
         run: npm run build --if-present
         env:
-          GITHUB_PACKAGE_TOKEN: ${{ secrets.GITHUB_PACKAGE_TOKEN }}
+          GITHUB_PACKAGE_TOKEN: ${{ (inputs.checkout-ref != '' && secrets.GITHUB_PACKAGE_TOKEN_READONLY) || secrets.GITHUB_PACKAGE_TOKEN }}

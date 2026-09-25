@@ -55,9 +55,12 @@ on:
        type: string
        default: ''
    secrets:
-     package-token: 
-       description: The nuget token to restore the packages
+     package-token:
+       description: GitHub Packages token used to restore private @easylife365 npm packages
        required: true
+     package-token-readonly:
+       description: 'A read:packages-only token, used instead of package-token whenever checkout-ref is set -- that path installs real, unreviewed Dependabot/Renovate content, and npm/yarn install can run arbitrary postinstall scripts from it, which should never be able to reach a credential that can also publish. Optional: falls back to package-token if not provided, so an existing caller with no readonly token configured keeps working exactly as before, just without this extra separation until it adds one.'
+       required: false
 
 env:
   CI: false
@@ -97,14 +100,14 @@ jobs:
 
      - uses: actions/setup-node@v7
        env:
-         GITHUB_PACKAGE_TOKEN: ${{ secrets.package-token }}
+         GITHUB_PACKAGE_TOKEN: ${{ (inputs.checkout-ref != '' && secrets.package-token-readonly) || secrets.package-token }}
          # actions/setup-node@v7 always writes "_authToken=${NODE_AUTH_TOKEN}" into the generated
          # .npmrc, unlike v4 which only wrote it when the variable was set. It only re-exports
          # NODE_AUTH_TOKEN to later steps if the variable was already present when this step ran, so
          # it has to be set here -- not on the install/build steps below -- to avoid every later
          # yarn/npm invocation failing with "Failed to replace env in config: ${NODE_AUTH_TOKEN}".
          # Matches the same fix already applied in ci_react_build.yml/ci_react_unit_tests.yml.
-         NODE_AUTH_TOKEN: ${{ secrets.package-token }}
+         NODE_AUTH_TOKEN: ${{ (inputs.checkout-ref != '' && secrets.package-token-readonly) || secrets.package-token }}
        with:
          node-version: '24.x'
          registry-url: 'https://npm.pkg.github.com'
@@ -118,14 +121,14 @@ jobs:
        if: ${{ inputs.yarn }}
        run: yarn install --frozen-lockfile
        env:
-         GITHUB_PACKAGE_TOKEN: ${{ secrets.package-token }}
+         GITHUB_PACKAGE_TOKEN: ${{ (inputs.checkout-ref != '' && secrets.package-token-readonly) || secrets.package-token }}
 
      - uses: bahmutov/npm-install@v1
        if: ${{ !inputs.yarn }}
        with:
          working-directory: ${{ inputs.app-location }}
        env:
-         GITHUB_PACKAGE_TOKEN: ${{ secrets.package-token }}
+         GITHUB_PACKAGE_TOKEN: ${{ (inputs.checkout-ref != '' && secrets.package-token-readonly) || secrets.package-token }}
 
      - uses: EasyLife365/get-version-action@v1.1.3
        id: version
@@ -140,29 +143,29 @@ jobs:
        run: yarn version --new-version ${{ steps.version.outputs.versionWithoutV }} --no-git-tag-version
        working-directory: ${{ inputs.app-location }}
        env:
-         GITHUB_PACKAGE_TOKEN: ${{ secrets.package-token }}
+         GITHUB_PACKAGE_TOKEN: ${{ (inputs.checkout-ref != '' && secrets.package-token-readonly) || secrets.package-token }}
 
      - name: Override telemetry env variable
        if: inputs.telemetry-client-id != ''
-       run: echo "${{ inputs.telemetry-env-name }}=${{ inputs.telemetry-client-id }}" >> $GITHUB_ENV
+       run: echo "${{ inputs.telemetry-env-name }}=${{ inputs.telemetry-client-id }}" >> "$GITHUB_ENV"
 
      - name: Override telemetry connection string env variable
        if: inputs.telemetry-connection-string != ''
-       run: echo "${{ inputs.telemetry-connection-string-env-name }}=${{ inputs.telemetry-connection-string }}" >> $GITHUB_ENV
+       run: echo "${{ inputs.telemetry-connection-string-env-name }}=${{ inputs.telemetry-connection-string }}" >> "$GITHUB_ENV"
 
      - name: Build (npm)
        if: ${{ !inputs.yarn }}
        run: "npm run build:${{ inputs.app-target }}"
        working-directory: ${{ inputs.app-location }}
        env:
-         GITHUB_PACKAGE_TOKEN: ${{ secrets.package-token }}
+         GITHUB_PACKAGE_TOKEN: ${{ (inputs.checkout-ref != '' && secrets.package-token-readonly) || secrets.package-token }}
 
      - name: Build (yarn)
        if: ${{ inputs.yarn }}
        run: "yarn build:${{ inputs.app-target }}"
        working-directory: ${{ inputs.app-location }}
        env:
-         GITHUB_PACKAGE_TOKEN: ${{ secrets.package-token }}
+         GITHUB_PACKAGE_TOKEN: ${{ (inputs.checkout-ref != '' && secrets.package-token-readonly) || secrets.package-token }}
 
      - name: Upload build app artifact
        if: ${{ inputs.upload-artifact }}
