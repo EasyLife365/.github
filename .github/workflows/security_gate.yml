@@ -86,11 +86,15 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
+      # merge_group is checked first and separately, rather than folded into the pull_request /
+      # pull_request_target clause: it has its own event fields (merge_group.base_sha/head_sha),
+      # not github.event.pull_request.*, which would be unset and silently collapse this to '' --
+      # a full scan instead of a diff, same as no restriction at all.
       - name: Scan for secrets
         uses: trufflesecurity/trufflehog@main
         with:
-          base: ${{ ((github.event_name == 'pull_request' || github.event_name == 'pull_request_target') && !inputs.full-history) && github.event.pull_request.base.sha || '' }}
-          head: ${{ ((github.event_name == 'pull_request' || github.event_name == 'pull_request_target') && !inputs.full-history) && github.event.pull_request.head.sha || '' }}
+          base: ${{ (github.event_name == 'merge_group' && !inputs.full-history) && github.event.merge_group.base_sha || (((github.event_name == 'pull_request' || github.event_name == 'pull_request_target') && !inputs.full-history) && github.event.pull_request.base.sha) || '' }}
+          head: ${{ (github.event_name == 'merge_group' && !inputs.full-history) && github.event.merge_group.head_sha || (((github.event_name == 'pull_request' || github.event_name == 'pull_request_target') && !inputs.full-history) && github.event.pull_request.head.sha) || '' }}
           extra_args: --results=verified,unknown
 
   dotnet-dependencies:
