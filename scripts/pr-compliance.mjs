@@ -61,28 +61,95 @@ const enabled = (check) => !cfg.skipChecks.includes(check);
 
 // ---------------------------------------------------------------------------------------------
 // Pull request context
+//
+// MERGE QUEUE
+//
+// A merge_group event carries no pull_request field at all -- GitHub's own schema for the
+// payload has no such field. The CONTENT checks (secrets, react-table, el-package-versions,
+// solution-membership, test-folder, restricted-paths, prerelease-pin) don't need it: they read
+// the diff and the checkout, and merge_group supplies its own base_sha/head_sha for exactly
+// that purpose -- the merge group's temporary commit, the actual merged result being tested.
+//
+// The PR-METADATA checks (pr-title, branch-name) do need it, and it is NOT safe to skip them
+// here: a pull request stays queued across a body edit (only a new commit dequeues it), so
+// skipping would let an edit silently strip pr-title's issue keyword -- a hard failure the rest
+// of the estate treats as unrecoverable ("nothing can recover it," per that check below) --
+// between queue admission and merge, with nothing left to catch it. So under merge_group this
+// re-fetches the pull request's CURRENT title/body/branch/author over the API instead, costing
+// one call. GITHUB_TOKEN and pull-requests: read exist on this job specifically for this.
 
 if (!env.GITHUB_EVENT_PATH || !existsSync(env.GITHUB_EVENT_PATH)) {
-  console.error('No GITHUB_EVENT_PATH. This script runs on a pull_request event.');
+  console.error('No GITHUB_EVENT_PATH. This script runs on a pull_request or merge_group event.');
   process.exit(1);
 }
 
 const event = JSON.parse(readFileSync(env.GITHUB_EVENT_PATH, 'utf8'));
 const pr = event.pull_request;
+const mergeGroup = event.merge_group;
 
-if (!pr) {
-  console.error('Event payload has no pull_request. Trigger this on pull_request.');
+if (!pr && !mergeGroup) {
+  console.error('Event payload has no pull_request or merge_group. Trigger this on one of those.');
   process.exit(1);
 }
 
-const title = pr.title || '';
-const body = pr.body || '';
-const branch = pr.head?.ref || '';
-const baseSha = pr.base?.sha;
-const headSha = pr.head?.sha;
-const author = pr.user?.login || '';
+// The queue's temporary branch name looks like "refs/heads/gh-readonly-queue/main/pr-123-<sha>".
+const PR_NUMBER_IN_REF = /\/pr-(\d+)-[0-9a-f]+$/;
 
-const isBot = pr.user?.type === 'Bot' || /\[bot\]$/.test(author);
+let title, body, branch, baseSha, headSha, author, isBot, prNumber;
+
+if (pr) {
+  title = pr.title || '';
+  body = pr.body || '';
+  branch = pr.head?.ref || '';
+  baseSha = pr.base?.sha;
+  headSha = pr.head?.sha;
+  author = pr.user?.login || '';
+  prNumber = pr.number;
+  isBot = pr.user?.type === 'Bot' || /\[bot\]$/.test(author);
+} else {
+  baseSha = mergeGroup.base_sha;
+  headSha = mergeGroup.head_sha;
+  prNumber = PR_NUMBER_IN_REF.exec(mergeGroup.head_ref || '')?.[1];
+
+  if (!prNumber) {
+    console.error(
+      `::error::Could not extract a pull request number from merge_group.head_ref ` +
+        `"${mergeGroup.head_ref}". Expected it to end in "/pr-<number>-<sha>" -- if GitHub has ` +
+        `changed this format, PR_NUMBER_IN_REF above needs updating.`,
+    );
+    process.exit(1);
+  }
+  if (!env.GITHUB_TOKEN || !env.GITHUB_REPOSITORY) {
+    console.error(
+      '::error::GITHUB_TOKEN and GITHUB_REPOSITORY are both required to re-fetch pull request ' +
+        'metadata under merge_group.',
+    );
+    process.exit(1);
+  }
+
+  const [owner, repo] = env.GITHUB_REPOSITORY.split('/');
+  const apiUrl = env.GITHUB_API_URL || 'https://api.github.com';
+  const response = await fetch(`${apiUrl}/repos/${owner}/${repo}/pulls/${prNumber}`, {
+    headers: {
+      authorization: `Bearer ${env.GITHUB_TOKEN}`,
+      accept: 'application/vnd.github+json',
+      'x-github-api-version': '2022-11-28',
+    },
+  });
+  if (!response.ok) {
+    console.error(
+      `::error::Could not fetch pull request #${prNumber} to re-check its metadata: ` +
+        `${response.status} ${await response.text()}`,
+    );
+    process.exit(1);
+  }
+  const livePr = await response.json();
+  title = livePr.title || '';
+  body = livePr.body || '';
+  branch = livePr.head?.ref || '';
+  author = livePr.user?.login || '';
+  isBot = livePr.user?.type === 'Bot' || /\[bot\]$/.test(author);
+}
 
 // ---------------------------------------------------------------------------------------------
 // Changed files
@@ -123,7 +190,12 @@ const touchedSet = new Set(touched);
 
 const touchedAny = (pattern) => touched.some((p) => pattern.test(p));
 
-console.log(`Pull request #${pr.number} by ${author}${isBot ? ' (bot)' : ''}`);
+console.log(
+  pr
+    ? `Pull request #${prNumber} by ${author}${isBot ? ' (bot)' : ''}`
+    : `Merge group for pull request #${prNumber} by ${author}${isBot ? ' (bot)' : ''} ` +
+      `(${mergeGroup.head_ref})`,
+);
 console.log(`Branch: ${branch}`);
 console.log(`Changed files: ${files.length} (${added.length} added)`);
 console.log('');

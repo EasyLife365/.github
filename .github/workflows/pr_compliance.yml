@@ -18,6 +18,19 @@
 #       with:
 #         solution-file: EL.Core.sln
 #       secrets: inherit
+#
+# MERGE QUEUE: a caller using a merge queue must also trigger this job on merge_group (types:
+# [checks_requested]) and drop any `if: github.event_name == 'pull_request'` guard on the job
+# that would otherwise skip it on that trigger -- a caller job that CAN be skipped reports its
+# check run under its bare job id, and GitHub counts a skipped check as passing, which would let
+# the queue merge without this check ever actually running. pr-compliance.mjs itself already
+# handles a merge_group event: it reads merge_group.base_sha/head_sha for the content checks
+# (secrets, react-table, solution-membership, etc.), and re-fetches the pull request by number
+# (recovered from merge_group.head_ref) to run the two PR-metadata checks (pr-title, branch-name)
+# against its CURRENT title/body/branch -- not skipped, because a pull request stays queued
+# across a body edit and pr-title's issue-keyword check is a hard failure this estate treats as
+# unrecoverable. That re-fetch needs GITHUB_TOKEN and pull-requests: read, both scoped to the
+# compliance job specifically below.
 
 name: PR compliance
 
@@ -77,6 +90,15 @@ jobs:
     name: Compliance
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    # Job-level override, not an addition to the workflow-level grant above: a job that declares
+    # its own permissions: block replaces the workflow-level one for that job rather than adding
+    # to it, so contents: read has to be repeated here alongside the new pull-requests: read.
+    # pull-requests: read exists for exactly one purpose -- re-fetching a pull request's CURRENT
+    # title/body under a merge_group event, where the payload carries neither. See pr-compliance.mjs's
+    # own merge-queue comment for why that re-fetch is a hard requirement, not an enhancement.
+    permissions:
+      contents: read
+      pull-requests: read
 
     steps:
       # fetch-depth: 0 so the script can diff against the merge base. A shallow clone has
@@ -124,6 +146,12 @@ jobs:
 
       - name: Run compliance checks
         env:
+          # Used only under a merge_group event, to re-fetch the pull request's CURRENT title
+          # and body -- the payload carries neither, and pr-title's issue-keyword check is a
+          # hard failure the rest of the estate treats as unrecoverable, so it cannot be
+          # skipped the way branch-name (warn-only, structurally hard to change post-creation)
+          # can. pull-requests: read above is scoped to this job for exactly this.
+          GITHUB_TOKEN: ${{ github.token }}
           INPUT_SOLUTION_FILE: ${{ inputs.solution-file }}
           INPUT_TEST_FOLDER_POLICY: ${{ inputs.test-folder-policy }}
           INPUT_FAIL_ON_BRANCH_NAME: ${{ inputs.fail-on-branch-name }}

@@ -17,11 +17,16 @@
 # that only triggers on pull_request will fail this check and never re-run it. The caller must
 # also trigger on pull_request_review, and must grant statuses: write.
 #
+# A caller using a merge queue must also trigger on merge_group, or this check can never
+# satisfy the queue's own required-check evaluation -- see MERGE QUEUE below.
+#
 #   on:
 #     pull_request:
 #       types: [opened, synchronize, reopened, ready_for_review]
 #     pull_request_review:
 #       types: [submitted]
+#     merge_group:
+#       types: [checks_requested]
 #
 #   jobs:
 #     agent-review-check:
@@ -30,6 +35,23 @@
 #         pull-requests: read
 #         statuses: write
 #       uses: EasyLife365/.github/.github/workflows/pr_agent_review.yml@main
+#
+# ---------------------------------------------------------------------------
+# MERGE QUEUE
+# ---------------------------------------------------------------------------
+# merge_group carries no pull_request at all, so github.event.pull_request.number is empty on
+# that trigger. The script recovers the PR number from the queue's own temporary branch name
+# instead (merge_group.head_ref), and posts the status against the merge group's own commit
+# rather than the PR's head commit -- a merge queue evaluates required checks against that
+# commit specifically, not the original PR. See pr-agent-review.mjs's own top-of-file comment
+# for the mechanics; nothing here needs to change per caller beyond adding the trigger above.
+#
+# This assumes one pull request per merge group, which is this estate's actual queue
+# configuration. A queue configured to BATCH several pull requests into one tested merge group
+# would need this rethought: each pull request's head_ref only names that one PR, so a batched
+# group would need one status check per member, not one for the whole group, and "reviewed"
+# would need to mean each member's own diff was reviewed -- not that the combination of several
+# was. Revisit this comment before ever enabling batching.
 #
 # Two things about that snippet are deliberate and are not style.
 #
@@ -43,10 +65,11 @@
 # them without any caller-side change ever being reviewed.
 #
 # SAFETY CONSTRAINT FOR ANYONE EDITING THIS FILE: it must never check out the pull request
-# head. pull_request_review runs in base-repo context with a write-capable token and the
-# caller's inherited secrets; checking out and executing head content under that token is
-# what makes pull_request_target dangerous, and it would make this workflow dangerous in
-# exactly the same way. The only checkout below targets <owner>/.github on purpose.
+# head. Both pull_request_review AND merge_group run in base-repo context with a write-capable
+# token and the caller's inherited secrets; checking out and executing head content under that
+# token is what makes pull_request_target dangerous, and it would make this workflow dangerous
+# in exactly the same way for either trigger. The only checkout below targets <owner>/.github
+# on purpose.
 #
 # WHO CAN SATISFY THIS CHECK
 #
@@ -146,8 +169,12 @@ jobs:
       - name: Check for an agent review on the head commit
         env:
           GITHUB_TOKEN: ${{ github.token }}
-          # Both trigger shapes carry the pull request, but under different keys.
+          # pull_request and pull_request_review carry the pull request under different keys;
+          # merge_group carries no pull_request at all, only its own queue metadata -- the
+          # script recovers the PR number from INPUT_MERGE_GROUP_HEAD_REF in that case. See the
+          # MERGE QUEUE comment near the top of this file.
           INPUT_PR_NUMBER: ${{ github.event.pull_request.number }}
+          INPUT_MERGE_GROUP_HEAD_REF: ${{ github.event.merge_group.head_ref }}
           INPUT_STATUS_CONTEXT: ${{ inputs.status-context }}
           INPUT_EXEMPT_AUTHORS: ${{ inputs.exempt-authors }}
         run: node .easylife-workflows/scripts/pr-agent-review.mjs
