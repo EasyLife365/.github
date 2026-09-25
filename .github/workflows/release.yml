@@ -37,7 +37,14 @@ jobs:
   create-release:
     runs-on: ubuntu-latest
     steps:
-      - uses: easylife365/get-version-action/create-release@v1
+      # Exact version, not the floating @v1: this is the one job in this repository with
+      # contents: write, and get-version-action has no tag protection of its own (confirmed live,
+      # not assumed) -- @v1 could be repointed by anyone with write access there, resolved fresh at
+      # whatever moment this workflow next runs, not at the moment this file was reviewed. Every
+      # other reference to this dependency in this repo (ci_react_publish.yml,
+      # release_nuget_packages.yml, spa_build.yml) already pins an exact version; this one didn't,
+      # backwards from what risk should dictate. Bump deliberately when a real reason exists to.
+      - uses: easylife365/get-version-action/create-release@v1.2.0
         with:
           version: ${{ inputs.version }}
           dry-run: ${{ inputs.dry_run }}
