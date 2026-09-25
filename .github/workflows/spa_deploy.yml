@@ -47,7 +47,7 @@ jobs:
           inlineScript: |
               SWA_DEPLOYMENT_TOKEN=$(az staticwebapp secrets list -n ${{ inputs.app-name }} --query 'properties.apiKey' -o tsv)
               echo "::add-mask::$SWA_DEPLOYMENT_TOKEN"
-              echo SWA_DEPLOYMENT_TOKEN=$SWA_DEPLOYMENT_TOKEN >> $GITHUB_ENV   
+              echo "SWA_DEPLOYMENT_TOKEN=$SWA_DEPLOYMENT_TOKEN" >> "$GITHUB_ENV"
     
       - uses: Azure/static-web-apps-deploy@v1
         with:
