@@ -46,6 +46,13 @@
 # commit specifically, not the original PR. See pr-agent-review.mjs's own top-of-file comment
 # for the mechanics; nothing here needs to change per caller beyond adding the trigger above.
 #
+# This assumes one pull request per merge group, which is this estate's actual queue
+# configuration. A queue configured to BATCH several pull requests into one tested merge group
+# would need this rethought: each pull request's head_ref only names that one PR, so a batched
+# group would need one status check per member, not one for the whole group, and "reviewed"
+# would need to mean each member's own diff was reviewed -- not that the combination of several
+# was. Revisit this comment before ever enabling batching.
+#
 # Two things about that snippet are deliberate and are not style.
 #
 # The job id is NOT `agent-review`. A caller job that can ever be skipped reports a check run
@@ -58,10 +65,11 @@
 # them without any caller-side change ever being reviewed.
 #
 # SAFETY CONSTRAINT FOR ANYONE EDITING THIS FILE: it must never check out the pull request
-# head. pull_request_review runs in base-repo context with a write-capable token and the
-# caller's inherited secrets; checking out and executing head content under that token is
-# what makes pull_request_target dangerous, and it would make this workflow dangerous in
-# exactly the same way. The only checkout below targets <owner>/.github on purpose.
+# head. Both pull_request_review AND merge_group run in base-repo context with a write-capable
+# token and the caller's inherited secrets; checking out and executing head content under that
+# token is what makes pull_request_target dangerous, and it would make this workflow dangerous
+# in exactly the same way for either trigger. The only checkout below targets <owner>/.github
+# on purpose.
 #
 # WHO CAN SATISFY THIS CHECK
 #
