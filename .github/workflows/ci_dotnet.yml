@@ -395,7 +395,11 @@ jobs:
           repository: EasyLife365/.github
           ref: main
           path: .shared-github
-          token: ${{ secrets.GITHUB_PACKAGE_TOKEN || github.token }}
+          # Was secrets.GITHUB_PACKAGE_TOKEN -- not a secret this file declares (only PACKAGE-TOKEN
+          # is), so this always fell through to github.token regardless of intent. Harmless in
+          # practice (checking out this same public repo works with the default token either way),
+          # but PACKAGE-TOKEN is what was actually meant.
+          token: ${{ secrets.PACKAGE-TOKEN || github.token }}
           persist-credentials: false
           sparse-checkout: |
             scripts/test-summary.mjs

@@ -110,14 +110,16 @@ jobs:
     timeout-minutes: 5
 
     steps:
-      # The script lives in this repository, not the one under review. job_workflow_sha pins it
+      # The script lives in this repository, not the one under review. workflow_sha pins it
       # to the same revision as this workflow, so a caller on an older ref keeps the behaviour
-      # it was reviewed against.
+      # it was reviewed against. Was `github.job_workflow_sha` -- not a real context property,
+      # so this always fell through to 'main' regardless of what ref a caller actually pinned
+      # (harmless while every caller floated on @main anyway; live the moment one doesn't).
       - name: Checkout shared scripts
         uses: actions/checkout@v7
         with:
           repository: ${{ github.repository_owner }}/.github
-          ref: ${{ github.job_workflow_sha || 'main' }}
+          ref: ${{ github.workflow_sha || 'main' }}
           path: .easylife-workflows
           fetch-depth: 1
 
