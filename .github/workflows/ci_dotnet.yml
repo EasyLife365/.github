@@ -396,14 +396,11 @@ jobs:
           ref: main
           path: .shared-github
           # Was secrets.GITHUB_PACKAGE_TOKEN -- not a secret this file declares (only PACKAGE-TOKEN
-          # is), so this always fell through to github.token regardless of intent. Harmless in
-          # practice (checking out this same public repo works with the default token either way),
-          # but PACKAGE-TOKEN is what was actually meant. Note the || github.token fallback is now
-          # dead: PACKAGE-TOKEN is required: true, so it can never be empty here -- if it were ever
-          # invalid instead, this step (which runs on always() specifically to summarise a failure
-          # elsewhere) would fail too, though restore/build already fail loudly for the same reason
-          # first.
-          token: ${{ secrets.PACKAGE-TOKEN || github.token }}
+          # is), so this always fell through to github.token regardless of intent. This step also
+          # runs on the untrusted checkout-ref (Dependabot/Renovate) path same as Restore and
+          # Install Azurite above, so it gets the same readonly-when-untrusted treatment: never
+          # let unreviewed content run under a publish-capable token.
+          token: ${{ (inputs.checkout-ref != '' && secrets.PACKAGE-TOKEN-READONLY) || secrets.PACKAGE-TOKEN }}
           persist-credentials: false
           sparse-checkout: |
             scripts/test-summary.mjs
