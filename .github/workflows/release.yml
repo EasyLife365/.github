@@ -1,0 +1,50 @@
+name: Release
+
+# Cuts a version tag against the current main and publishes a GitHub Release with auto-generated
+# notes from merged PR titles since the last tag -- which is why every PR title carries its issue
+# keyword (see readme.md's Pull request review section): that's what "What's Changed" is built
+# from. This repository has no build artifact of its own to validate before tagging -- every PR
+# into main already passed actionlint and the required status checks, so a commit reaching main is
+# already the thing being released.
+#
+# Delegates the actual tag/release/major-tag-move logic to EasyLife365/get-version-action's own
+# create-release action rather than hand-rolling it here a second time. This file's first version
+# duplicated that exact logic in bash; the two copies would have drifted the moment either one got
+# a fix the other didn't (see get-version-action#21/#22, which built create-release for exactly
+# this reason). No checkout needed at all: create-release talks to the GitHub API directly using
+# context.sha/context.repo, which GitHub Actions populates for every event without one.
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Release version (for example: 1.0.0 or v1.0.0)'
+        required: true
+        type: string
+      dry_run:
+        description: 'Validate only (no tag or release will be created)'
+        required: false
+        default: false
+        type: boolean
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.repository }}
+  cancel-in-progress: false
+
+jobs:
+  create-release:
+    runs-on: ubuntu-latest
+    steps:
+      # Exact version, not the floating @v1: this is the one job in this repository with
+      # contents: write, and get-version-action has no tag protection of its own (confirmed live,
+      # not assumed) -- @v1 could be repointed by anyone with write access there, resolved fresh at
+      # whatever moment this workflow next runs, not at the moment this file was reviewed. Every
+      # other reference to this dependency in this repo (ci_react_publish.yml,
+      # release_nuget_packages.yml, spa_build.yml) already pins an exact version; this one didn't,
+      # backwards from what risk should dictate. Bump deliberately when a real reason exists to.
+      - uses: easylife365/get-version-action/create-release@v1.2.0
+        with:
+          version: ${{ inputs.version }}
+          dry-run: ${{ inputs.dry_run }}
