@@ -62,6 +62,9 @@ on:
       package-token:
         description: GitHub Packages token used to restore private EL.* and @easylife365 packages.
         required: false
+      package-token-readonly:
+        description: 'A read-only token, used instead of package-token whenever checkout-ref is set -- that path scans real, unreviewed Dependabot/Renovate content, which should never be able to reach a credential that can also publish. Optional: falls back to package-token if not provided, so an existing caller with no readonly token configured keeps working exactly as before, just without this extra separation until it adds one.'
+        required: false
 
 permissions:
   contents: read
@@ -96,7 +99,7 @@ jobs:
     runs-on: ubuntu-latest
     env:
       GITHUB_PACKAGE_USER_NAME: github-actions
-      GITHUB_PACKAGE_TOKEN: ${{ secrets.package-token }}
+      GITHUB_PACKAGE_TOKEN: ${{ (inputs.checkout-ref != '' && secrets.package-token-readonly) || secrets.package-token }}
     steps:
       - name: Refuse checkout-ref for anyone but an allow-listed bot
         if: ${{ inputs.checkout-ref != '' && github.actor != 'dependabot[bot]' && github.actor != 'renovate[bot]' }}
@@ -129,7 +132,10 @@ jobs:
     if: inputs.node
     runs-on: ubuntu-latest
     env:
-      GITHUB_PACKAGE_TOKEN: ${{ secrets.package-token }}
+      # --ignore-scripts below already stops a malicious lockfile entry from running a postinstall
+      # hook against this token; the readonly split is still applied for defence in depth and
+      # consistency with the other jobs in this file.
+      GITHUB_PACKAGE_TOKEN: ${{ (inputs.checkout-ref != '' && secrets.package-token-readonly) || secrets.package-token }}
     steps:
       - name: Refuse checkout-ref for anyone but an allow-listed bot
         if: ${{ inputs.checkout-ref != '' && github.actor != 'dependabot[bot]' && github.actor != 'renovate[bot]' }}

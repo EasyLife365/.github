@@ -18,6 +18,9 @@ on:
     secrets:
       GITHUB_PACKAGE_TOKEN:
         required: false
+      GITHUB_PACKAGE_TOKEN_READONLY:
+        description: 'A read:packages-only token, used instead of GITHUB_PACKAGE_TOKEN whenever checkout-ref is set -- that path checks out real, unreviewed Dependabot/Renovate content earlier in this job, which should never share a job with a credential that can also publish. Optional: falls back to GITHUB_PACKAGE_TOKEN if not provided, so an existing caller with no readonly token configured keeps working exactly as before, just without this extra separation until it adds one.'
+        required: false
 
 permissions:
   contents: read
@@ -61,7 +64,7 @@ jobs:
           repository: EasyLife365/.github
           ref: main
           path: .shared-github
-          token: ${{ secrets.GITHUB_PACKAGE_TOKEN || github.token }}
+          token: ${{ (inputs.checkout-ref != '' && secrets.GITHUB_PACKAGE_TOKEN_READONLY) || secrets.GITHUB_PACKAGE_TOKEN || github.token }}
           persist-credentials: false
           sparse-checkout: |
             scripts/check-wcag.mjs
@@ -96,4 +99,7 @@ jobs:
             exit 0
           fi
 
+          # $FILES is deliberately unquoted: it's a space-separated list of changed file paths
+          # that must become separate arguments to the script, not one glued-together string.
+          # shellcheck disable=SC2086
           node .shared-github/scripts/check-wcag.mjs $FILES

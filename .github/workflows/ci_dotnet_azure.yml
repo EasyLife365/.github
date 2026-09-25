@@ -215,9 +215,15 @@ jobs:
         run: |
           if [ -z "${{ inputs.project-name }}" ]; then
             echo "Building all projects..."
+            # $BUILD_PROPERTIES is deliberately unquoted: may hold multiple space-separated
+            # MSBuild properties (e.g. "-p:A=1 -p:B=2") that must become separate dotnet
+            # arguments, not one glued-together string.
+            # shellcheck disable=SC2086
             dotnet build --configuration Release --no-restore $BUILD_PROPERTIES
           else
             echo "Building project: ${{ inputs.project-name }}"
+            # $BUILD_PROPERTIES deliberately unquoted, see above.
+            # shellcheck disable=SC2086
             dotnet build "${{ inputs.project-name }}" --configuration Release --no-restore $BUILD_PROPERTIES
           fi
 
@@ -384,12 +390,14 @@ jobs:
               # `gh run view --log-failed` then returns in full, setup noise included. PIPESTATUS
               # keeps dotnet's exit code rather than tee's.
               LOG=$(mktemp)
+              # $BUILD_PROPERTIES deliberately unquoted, see the Build step above.
+              # shellcheck disable=SC2086
               dotnet test "$PROJECT" --configuration Release --no-restore --verbosity normal "${LOGGER_ARGS[@]}" "${FILTER_ARGS[@]}" "${IGNORE_EXIT_CODE_ARGS[@]}" $BUILD_PROPERTIES 2>&1 | tee "$LOG"
               exit_code=${PIPESTATUS[0]}
               output=$(cat "$LOG")
               rm -f "$LOG"
               echo "::endgroup::"
-              if [ $exit_code -ne 0 ]; then
+              if [ "$exit_code" -ne 0 ]; then
                 if [ "$ALLOW_ZERO_TESTS" = "true" ] && is_zero_test_output "$output"; then
                   echo "::warning::Zero tests ran for $PROJECT; continuing."
                 else
@@ -407,12 +415,14 @@ jobs:
           else
             echo "::group::Testing ${{ inputs.project-name }}"
             LOG=$(mktemp)
+            # $BUILD_PROPERTIES deliberately unquoted, see the Build step above.
+            # shellcheck disable=SC2086
             dotnet test "${{ inputs.project-name }}" --configuration Release --no-restore --verbosity normal "${LOGGER_ARGS[@]}" "${FILTER_ARGS[@]}" "${IGNORE_EXIT_CODE_ARGS[@]}" $BUILD_PROPERTIES 2>&1 | tee "$LOG"
             exit_code=${PIPESTATUS[0]}
             output=$(cat "$LOG")
             rm -f "$LOG"
             echo "::endgroup::"
-            if [ $exit_code -ne 0 ]; then
+            if [ "$exit_code" -ne 0 ]; then
               if [ "$ALLOW_ZERO_TESTS" = "true" ] && is_zero_test_output "$output"; then
                 echo "::warning::Zero tests ran for ${{ inputs.project-name }}; continuing."
               else
