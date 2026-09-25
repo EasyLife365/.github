@@ -106,6 +106,14 @@ jobs:
       # of floating on @main, taking the required agent-review/compliance-gate checks down with
       # it. `job.workflow_sha`/`job.workflow_repository` exist specifically for this case: they
       # name the reusable workflow's own file regardless of who calls it.
+      #
+      # actionlint (rhysd/actionlint, pinned in workflow_lint.yml) will flag both properties below
+      # as undefined on the `job` context -- its latest release (v1.7.12, 2026-03-30) predates
+      # GitHub adding them (2026-04-23), so its bundled context schema hasn't caught up yet. This
+      # is an expected, upstream-only false positive on this repo's non-required lint check, not a
+      # real problem: confirmed correct against GitHub's own context reference docs and verified
+      # live against a real second caller repository. Do not revert to `github.workflow_sha` to
+      # silence it -- that reintroduces the actual bug this fixes.
       - name: Checkout shared scripts
         uses: actions/checkout@v7
         with:
