@@ -76,6 +76,11 @@ jobs:
 
           if [ "${{ github.event_name }}" = "pull_request" ] || [ "${{ github.event_name }}" = "pull_request_target" ]; then
             DIFF_RANGE="origin/${{ github.base_ref }}...HEAD"
+          elif [ "${{ github.event_name }}" = "merge_group" ]; then
+            # merge_group.base_sha is a real commit, not a branch name -- no "Fetch base branch"
+            # step needed for it, unlike pull_request/pull_request_target above: fetch-depth: 0 on
+            # the checkout already has this ancestor commit, since it's on the default branch.
+            DIFF_RANGE="${{ github.event.merge_group.base_sha }}...HEAD"
           elif [ "${{ github.event_name }}" = "push" ]; then
             BEFORE_SHA="${{ github.event.before }}"
             if [ -z "$BEFORE_SHA" ] || [ "$BEFORE_SHA" = "0000000000000000000000000000000000000000" ]; then
