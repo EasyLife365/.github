@@ -163,7 +163,7 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
           fetch-tags: true
@@ -180,12 +180,12 @@ jobs:
           sudo setsid nohup bash -c 'rm -rf /usr/local/lib/android /opt/ghc /usr/local/share/boost /usr/share/swift /opt/hostedtoolcache/CodeQL /usr/local/.ghcup; docker image prune -af' > /dev/null 2>&1 &
 
       - name: Setup .NET
-        uses: actions/setup-dotnet@v4
+        uses: actions/setup-dotnet@v6
         with:
           dotnet-version: ${{ inputs.dotnet-version }}
 
       - name: Cache NuGet packages
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: ~/.nuget/packages
           key: ${{ runner.os }}-nuget-${{ hashFiles('**/*.csproj') }}
@@ -244,7 +244,7 @@ jobs:
 
       - name: Setup Node.js environment
         if: ${{ inputs.use-azurite && inputs.run-tests }}
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
 
       # apt, not npm: the npm registry install 401s on any caller whose own setup (a prior
       # actions/setup-node with registry-url, or an .npmrc committed for its own package
@@ -303,7 +303,7 @@ jobs:
 
       - name: Azure login
         if: ${{ inputs.azure-login && inputs.run-tests }}
-        uses: azure/login@v2
+        uses: azure/login@v3
         with:
           # vars resolves against the CALLING repository, so one organization variable
           # serves every caller and no identity is repeated per repository.
@@ -457,7 +457,7 @@ jobs:
       # scrolling past restore, build and setup.
       - name: Checkout shared test summary script
         if: ${{ always() && inputs.run-tests }}
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           repository: EasyLife365/.github
           ref: main
@@ -487,7 +487,7 @@ jobs:
       # are not now -- and after the run the logs alone cannot answer that.
       - name: Upload test results
         if: ${{ always() && inputs.run-tests }}
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: test-results-${{ github.job }}-${{ github.run_attempt }}
           path: TestResults/*.trx
@@ -509,7 +509,7 @@ jobs:
 
       - name: Upload artifacts
         if: ${{ inputs.upload-artifacts }}
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: ${{ inputs.artifact-name != '' && inputs.artifact-name || github.event.repository.name }}
           path: ${{ inputs.artifacts-path }}

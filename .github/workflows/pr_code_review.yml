@@ -163,7 +163,7 @@ jobs:
       # authenticates against was created by createFoundryPrincipals.ps1 and only trusts this
       # repository's own `pull_request` runs.
       - name: Azure login (Foundry)
-        uses: azure/login@v2
+        uses: azure/login@v3
         with:
           client-id: ${{ vars.FOUNDRY_CI_CLIENT_ID }}
           tenant-id: ${{ vars.TENANTID }}
