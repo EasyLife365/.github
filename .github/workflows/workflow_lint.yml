@@ -44,4 +44,11 @@ jobs:
       - name: Check workflow files
         uses: docker://rhysd/actionlint:1.7.12
         with:
-          args: -color
+          # job.workflow_sha and job.workflow_repository exist on GitHub's job context (added
+          # 2026-04-23) and pr_compliance.yml / pr_agent_review.yml rely on them deliberately, but
+          # actionlint 1.7.12 (2026-03-30), the latest release, predates them and reports them as
+          # undefined on every pull request. Ignore exactly those two messages -- anything else
+          # still fails. Remove this once a release that knows them is pinned above.
+          args: >-
+            -color
+            -ignore 'property "workflow_(sha|repository)" is not defined in object type \{check_run_id'
