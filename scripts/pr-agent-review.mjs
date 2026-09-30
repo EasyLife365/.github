@@ -271,10 +271,12 @@ const TRUSTED_ASSOCIATIONS = new Set(['OWNER', 'MEMBER', 'COLLABORATOR']);
 // is asked, and write or above counts, which is what "OWNER, MEMBER or COLLABORATOR" was standing
 // in for.
 //
-// Fails closed: a 404 (not a collaborator, or a bot login), a 403 or any other error leaves the
+// Fails closed: a 404 (not a collaborator), a 403 or any other error leaves the
 // review untrusted, and the warning below says so. Only reviews that carry a marker are looked up,
 // and once per login, so a pull request nobody has reviewed costs no extra calls.
-const WRITE_ROLES = new Set(['admin', 'maintain', 'write']);
+// `permission` is the legacy field: admin, write, read or none, with maintain folded into write
+// and triage into read. Unlike `role_name` it stays meaningful for a custom repository role.
+const WRITE_PERMISSIONS = new Set(['admin', 'write']);
 const permissionCache = new Map();
 
 async function hasWriteAccess(login) {
@@ -294,7 +296,7 @@ async function hasWriteAccess(login) {
       );
       if (response.ok) {
         const body = await response.json();
-        result = WRITE_ROLES.has(body.role_name ?? body.permission);
+        result = WRITE_PERMISSIONS.has(body.permission);
       } else if (response.status !== 404) {
         console.warn(`::warning::Could not read the repository permission of @${login}: ${response.status}`);
       }
@@ -337,7 +339,9 @@ for (const review of reviews) {
   const hasMarker = MARKER.test(review.body || '');
   MARKER.lastIndex = 0;
   if (!hasMarker) continue;
-  if (await hasWriteAccess(entry.by)) all.push(entry);
+  // Only a person is looked up. An app's bot login is never trusted by this route, so that does
+  // not depend on how the permission endpoint treats one.
+  if (review.user?.type === 'User' && (await hasWriteAccess(entry.by))) all.push(entry);
   else untrusted.push(entry);
 }
 
