@@ -75,7 +75,9 @@
 #
 # WHO CAN SATISFY THIS CHECK
 #
-# Only a REVIEW, only from OWNER / MEMBER / COLLABORATOR. Plain issue comments are not read.
+# Only a REVIEW, only from OWNER / MEMBER / COLLABORATOR, or from anyone with write access to the
+# repository. The second route exists because github.token reports a PRIVATE org member as
+# CONTRIBUTOR, so author_association alone rejects real maintainers. Plain issue comments are not read.
 # The author of a pull request may satisfy it on their own pull request; the status names who
 # posted the marker so an approver can see that and re-run it if they want.
 #
