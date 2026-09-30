@@ -103,7 +103,7 @@ while the pull request itself receives nothing and stays red. That is why ours c
 prefix rather than sitting next to it as `review`.
 
 **Who can satisfy it.** The marker is accepted only from a **review** (not a plain comment) by
-someone with `OWNER`, `MEMBER` or `COLLABORATOR` standing. A pull request author *may* satisfy it
+someone with `OWNER`, `MEMBER` or `COLLABORATOR` standing, or with write access to the repository. The second route is there because the check reads with `github.token`, which sees a *private* org member as `CONTRIBUTOR`; the reviewer's repository permission does not depend on whether their membership is public. A pull request author *may* satisfy it
 on their own pull request — running `/el-review` before asking anyone to look is a good habit and
 banning it would only discourage it — but the status names who posted it, so an approver sees a
 self-review and can re-run it. The human approval is a separate person regardless; GitHub

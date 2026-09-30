@@ -260,6 +260,52 @@ if (cfg.exemptAuthors.includes(author)) {
 // separate person either way, which GitHub enforces.
 const TRUSTED_ASSOCIATIONS = new Set(['OWNER', 'MEMBER', 'COLLABORATOR']);
 
+// author_association is NOT a reliable statement of standing when read with github.token. The
+// token is an app installation, not an org member, so GitHub reports a PRIVATE org member as
+// CONTRIBUTOR (or NONE) to it, even when that person is an org admin. Their review then looked
+// untrusted and the check stayed red however many times /el-review ran.
+//
+// The repository permission does not have that blind spot: it is a property of the repository,
+// not of who may see someone's membership. So an untrusted association is not the end of the
+// question for a review that carries a marker -- the reviewer's own permission on this repository
+// is asked, and write or above counts, which is what "OWNER, MEMBER or COLLABORATOR" was standing
+// in for.
+//
+// Fails closed: a 404 (not a collaborator, or a bot login), a 403 or any other error leaves the
+// review untrusted, and the warning below says so. Only reviews that carry a marker are looked up,
+// and once per login, so a pull request nobody has reviewed costs no extra calls.
+const WRITE_ROLES = new Set(['admin', 'maintain', 'write']);
+const permissionCache = new Map();
+
+async function hasWriteAccess(login) {
+  if (!login) return false;
+  if (!permissionCache.has(login)) {
+    let result = false;
+    try {
+      const response = await fetch(
+        `${cfg.apiUrl}/repos/${owner}/${repo}/collaborators/${encodeURIComponent(login)}/permission`,
+        {
+          headers: {
+            authorization: `Bearer ${cfg.token}`,
+            accept: 'application/vnd.github+json',
+            'x-github-api-version': '2022-11-28',
+          },
+        },
+      );
+      if (response.ok) {
+        const body = await response.json();
+        result = WRITE_ROLES.has(body.role_name ?? body.permission);
+      } else if (response.status !== 404) {
+        console.warn(`::warning::Could not read the repository permission of @${login}: ${response.status}`);
+      }
+    } catch (error) {
+      console.warn(`::warning::Could not read the repository permission of @${login}: ${error.message}`);
+    }
+    permissionCache.set(login, result);
+  }
+  return permissionCache.get(login);
+}
+
 const reviews = await apiAll(`/repos/${owner}/${repo}/pulls/${cfg.prNumber}/reviews`);
 
 // Kept separately so an untrusted marker can be reported rather than silently ignored. Someone
@@ -284,9 +330,15 @@ for (const review of reviews) {
     // review.
     sha: review.commit_id,
   };
-  if (TRUSTED_ASSOCIATIONS.has(review.author_association)) all.push(entry);
-  else if (MARKER.test(review.body || '')) untrusted.push(entry);
+  if (TRUSTED_ASSOCIATIONS.has(review.author_association)) {
+    all.push(entry);
+    continue;
+  }
+  const hasMarker = MARKER.test(review.body || '');
   MARKER.lastIndex = 0;
+  if (!hasMarker) continue;
+  if (await hasWriteAccess(entry.by)) all.push(entry);
+  else untrusted.push(entry);
 }
 
 // Every trusted marker counts, whatever commit its review was recorded against. The one for the
@@ -367,7 +419,7 @@ console.warn(`::warning::${description}`);
 if (untrusted.length > 0) {
   console.warn(`::warning::Ignored ${untrusted.length} marker(s) from an author without write access.`);
   for (const item of untrusted) {
-    console.warn(`  - @${item.by || 'unknown'} (${item.association}) -- needs OWNER, MEMBER or COLLABORATOR`);
+    console.warn(`  - @${item.by || 'unknown'} (${item.association}) -- needs OWNER, MEMBER or COLLABORATOR, or write access to this repository`);
   }
   console.warn('');
 }
