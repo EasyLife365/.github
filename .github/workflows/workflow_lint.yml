@@ -49,6 +49,9 @@ jobs:
           # actionlint 1.7.12 (2026-03-30), the latest release, predates them and reports them as
           # undefined on every pull request. Ignore exactly those two messages -- anything else
           # still fails. Remove this once a release that knows them is pinned above.
+          #
+          # The action splits args on whitespace and does not honour quotes, so the pattern must
+          # contain neither: \s stands in for each space.
           args: >-
             -color
-            -ignore 'property "workflow_(sha|repository)" is not defined in object type \{check_run_id'
+            -ignore workflow_(sha|repository)\S*\sis\snot\sdefined\sin\sobject\stype\s\{check_run_id
