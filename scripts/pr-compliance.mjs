@@ -175,8 +175,17 @@ console.log('');
 // can never pass -- blocks a pull request forever. `branch-name` a few lines below already exempts
 // bots for the same reason; this check simply hadn't been given the same guard.
 
-const KEYWORD_IN_BODY = /\b(Closes|Fixes|Associates|Resolves)\s+(?:[\w.-]+\/[\w.-]+)?#\d+/i;
-const KEYWORD_SUFFIX = /\.\s*(Closes|Fixes|Associates)\s+#\d+\.?\s*$/;
+// An issue reference is either GitHub's short form (bare #n, or owner/repo#n for a cross-repo
+// reference) or a full github.com/.../issues|pull/n URL -- GitHub's own keyword-linking and
+// auto-linking treat both forms identically, so this check must too. Missing the URL form here
+// rejected a genuinely valid PR body (EasyLife365-Exchange#1826, "Associates
+// https://github.com/.../issues/336") that GitHub itself linked correctly.
+const ISSUE_REF = String.raw`(?:[\w.-]+\/[\w.-]+)?#\d+|https:\/\/github\.com\/[\w.-]+\/[\w.-]+\/(?:issues|pull)\/\d+`;
+const KEYWORD_IN_BODY = new RegExp(String.raw`\b(Closes|Fixes|Associates|Resolves)\s+(?:${ISSUE_REF})`, 'i');
+// Symmetric with KEYWORD_IN_BODY: a title correctly ending in "Associates owner/repo#n" or the
+// full URL form used to trigger this (advisory) warning for using the "wrong" form, when neither
+// is wrong -- only a bare, unqualified "#n" ever needed narrowing down to that one shape.
+const KEYWORD_SUFFIX = new RegExp(String.raw`\.\s*(Closes|Fixes|Associates)\s+(?:${ISSUE_REF})\.?\s*$`, 'i');
 
 if (enabled('pr-title') && !pr) {
   note(
