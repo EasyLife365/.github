@@ -169,7 +169,7 @@ jobs:
           # runs afterward, including a package's own build-time targets.
           persist-credentials: false
 
-      - uses: EasyLife365/get-version-action@v1.1.3
+      - uses: EasyLife365/get-version-action@v1.2.0
         id: version
 
       # Runs detached so restore and build proceed while it works. Ported from EasyLife365-
