@@ -47,11 +47,12 @@ jobs:
           # job.workflow_sha and job.workflow_repository exist on GitHub's job context (added
           # 2026-04-23) and pr_compliance.yml / pr_agent_review.yml rely on them deliberately, but
           # actionlint 1.7.12 (2026-03-30), the latest release, predates them and reports them as
-          # undefined on every pull request. Ignore exactly those two messages -- anything else
-          # still fails. Remove this once a release that knows them is pinned above.
+          # undefined on every pull request. Ignore only those two properties on the job context
+          # (the {check_run_id tail is what scopes it there) -- anything else still fails. Remove
+          # this once a release that knows them is pinned above.
           #
           # The action splits args on whitespace and does not honour quotes, so the pattern must
-          # contain neither: \s stands in for each space.
+          # contain neither: \s stands in for each space and \x22 for each double quote.
           args: >-
             -color
-            -ignore workflow_(sha|repository)\S*\sis\snot\sdefined\sin\sobject\stype\s\{check_run_id
+            -ignore property\s\x22workflow_(sha|repository)\x22\sis\snot\sdefined\sin\sobject\stype\s\{check_run_id
