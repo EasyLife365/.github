@@ -203,6 +203,8 @@ commit status.
 than `!= 'pull_request_review'`, so a trigger added later has to opt in deliberately instead of
 silently inheriting a payload `pr-compliance.mjs` cannot parse.
 
+**Dismissing a review takes it back, but only at the next run.** `agent-review` ignores dismissed reviews. Because a later push no longer retires a review, a caller that wants a dismissal to turn the status red straight away adds `dismissed` to its `pull_request_review` types; without it the status is recomputed on the next push or review.
+
 **The concurrency group is keyed by event.** The two event types do not run the same job set — a
 review run skips compliance — so sharing a group with `cancel-in-progress` lets a review
 submission cancel an in-flight push run's compliance job and never replace it, leaving the
@@ -237,4 +239,4 @@ Prerequisites, the rules the review applies, and the rollout order are documente
 |---|---|
 | `scripts/check-wcag.mjs` | Accessibility rules for the WCAG check |
 | `scripts/pr-compliance.mjs` | The deterministic pull request checks run by `pr_compliance.yml` |
-| `scripts/pr-agent-review.mjs` | The head-commit agent-review check run by `pr_agent_review.yml` |
+| `scripts/pr-agent-review.mjs` | The agent-review check run by `pr_agent_review.yml` |

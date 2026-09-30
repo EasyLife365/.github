@@ -54,9 +54,9 @@
 // "refs/heads/gh-readonly-queue/main/pr-123-<sha>". PR_NUMBER_IN_REF below extracts it.
 //
 // Once resolved, the review lookup itself is unchanged: it reads the markers on the PR's own
-// reviews and compares them with the PR's real head commit (pull.head.sha, fetched by number)
-// only to describe how far it has moved. What changes is where the ANSWER gets posted: a merge queue evaluates
-// required checks against the merge group's own temporary commit, not the PR's head commit --
+// reviews and compares the reviewed commit with the PR's real head commit (pull.head.sha, fetched
+// by number) only to describe how far the head has moved. What changes is where the ANSWER gets
+// posted: a merge queue evaluates required checks against the merge group's own temporary commit, not the PR's head commit --
 // GitHub's own docs describe GITHUB_SHA as "SHA of the merge group" for this event -- so
 // postStatus targets GITHUB_SHA instead of the PR's head commit specifically when this run was
 // triggered by merge_group. For every other trigger this is a no-op: GITHUB_EVENT_NAME is not
@@ -120,9 +120,8 @@ async function api(path) {
 
 /**
  * Follows pagination. Both endpoints return oldest first, so on a pull request with more than
- * one page the newest review -- the one most likely to match the head commit -- is on the LAST
- * page. Reading only the first would report "no review" on exactly the busy pull requests
- * where one is most likely to exist.
+ * one page the newest review is on the LAST page. Reading only the first would report "no review"
+ * on exactly the busy pull requests where one is most likely to exist.
  */
 async function apiAll(path) {
   const items = [];
@@ -214,8 +213,8 @@ const pull = await api(`/repos/${owner}/${repo}/pulls/${cfg.prNumber}`);
 const headSha = pull.head.sha;
 const author = (pull.user?.login || '').toLowerCase();
 
-// Where the status is POSTED, as distinct from headSha (what was actually reviewed, used for
-// every marker-matching decision below). Identical to headSha outside a merge queue -- see the
+// Where the status is POSTED, as distinct from headSha (the pull request's real head, which the
+// reviewed commit is compared with below). Identical to headSha outside a merge queue -- see the
 // merge-queue comment near the top of this file.
 const statusSha = mergeGroupSha || headSha;
 
@@ -270,20 +269,32 @@ const untrusted = [];
 
 const all = [];
 for (const review of reviews) {
+  // A dismissed review is GitHub's way of saying "this no longer counts". The reviews list still
+  // returns it, and now that a push no longer retires a review, dismissing it is the one way left
+  // to take it back.
+  if (review.state === 'DISMISSED') continue;
   const entry = {
     body: review.body,
     at: review.submitted_at,
     by: review.user?.login,
     association: review.author_association,
+    // The commit GitHub recorded the review against. It is set by the server when the review is
+    // submitted, so it is used instead of the marker's own `sha` for everything below: the
+    // marker text is free-form, this is not, and it can never name a commit pushed after the
+    // review.
+    sha: review.commit_id,
   };
   if (TRUSTED_ASSOCIATIONS.has(review.author_association)) all.push(entry);
   else if (MARKER.test(review.body || '')) untrusted.push(entry);
   MARKER.lastIndex = 0;
 }
 
-// Every trusted marker counts, whatever commit it names. The one that matches the head commit wins
-// when there is one, so a re-review of the head reports its own model and finding count; otherwise
-// the most recent marker is the one described.
+// Every trusted marker counts, whatever commit its review was recorded against. The one for the
+// head commit wins when there is one, so a re-review of the head reports its own model and finding
+// count; otherwise the most recent marker is the one described.
+//
+// A marker still has to carry a `sha` field to be well formed, but the value is not used: the
+// review's own commit_id replaces it (the review's fields come last in the spread).
 const markers = [];
 for (const item of all) {
   for (const marker of markersIn(item.body)) {
@@ -308,15 +319,19 @@ if (markers.length > 0) {
   if (best.sha !== headSha) {
     let count = null;
     try {
+      // Only a linear history gives a meaningful count. A reviewed commit that is no longer an
+      // ancestor of the head (a force-push or rebase) compares as diverged or behind, and its
+      // ahead_by would understate the change, so that case is reported as unknown.
+      if (!/^[0-9a-f]{40}$/i.test(String(best.sha))) throw new Error('the review has no usable commit id');
       const comparison = await api(`/repos/${owner}/${repo}/compare/${best.sha}...${headSha}`);
-      if (Number.isInteger(comparison.ahead_by)) count = comparison.ahead_by;
+      if (comparison.status === 'ahead' && Number.isInteger(comparison.ahead_by)) count = comparison.ahead_by;
     } catch (error) {
       console.warn(`::warning::Could not compare ${best.sha} with ${headSha}: ${error.message}`);
     }
     const noun = count === 1 ? 'commit' : 'commits';
     since = count === null
-      ? ` at ${best.sha.slice(0, 7)}, commits since unknown`
-      : ` at ${best.sha.slice(0, 7)}, ${count} ${noun} since`;
+      ? ` at ${String(best.sha).slice(0, 7)}, commits since unknown`
+      : ` at ${String(best.sha).slice(0, 7)}, ${count} ${noun} since`;
   }
 
   const summary = `Reviewed${who}${since}`;
