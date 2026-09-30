@@ -1,14 +1,16 @@
-# Verifies a Claude review exists for the pull request's CURRENT head commit.
+# Verifies a Claude review exists for the pull request.
 #
 # The approval rule is "one human approval plus a passing agent review on every pull request".
 # The human half is enforced by the branch ruleset. This is the other half.
 #
 # It does not read the review or judge what it found -- the judgement is in the review itself,
 # posted by the /el-review skill in the approver's own session. This answers only "did one
-# happen, for this commit".
+# happen on this pull request".
 #
-# Binding it to the head commit is the whole point. A review of an earlier commit must not
-# satisfy the check for code pushed afterwards, or you review once, push anything, and merge.
+# One review per pull request is enough. The marker names the commit that was reviewed; the check
+# does not require that to be the head, so a push after the review does not turn it red. The
+# status names the reviewed commit and how many commits came after it instead, so an approver can
+# see how far the code has moved past the review and re-run /el-review if that matters to them.
 #
 # ---------------------------------------------------------------------------
 # CALLER REQUIREMENTS -- this needs more than the other reusable workflows
@@ -84,7 +86,7 @@
 # THE JOB'S COLOUR IS NOT THE CHECK'S ANSWER
 #
 # This job goes green whenever it managed to post a status, whatever that status says. The
-# finding is in the status: red when no review exists for the head commit, green when one does.
+# finding is in the status: red when the pull request has no trusted review, green when it has one.
 #
 # That split matters because a check run is never retracted. When the review lands, the
 # pull_request_review run adds a SECOND check run of the same name -- so if the first run had
@@ -166,7 +168,7 @@ jobs:
         with:
           node-version: ${{ inputs.node-version }}
 
-      - name: Check for an agent review on the head commit
+      - name: Check for an agent review on the pull request
         env:
           GITHUB_TOKEN: ${{ github.token }}
           # pull_request and pull_request_review carry the pull request under different keys;
