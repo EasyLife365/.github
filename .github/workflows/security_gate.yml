@@ -86,28 +86,35 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
-      # merge_group is checked first and separately, rather than folded into the pull_request /
-      # pull_request_target clause: it has its own event fields (merge_group.base_sha/head_sha),
-      # not github.event.pull_request.*, which would be unset and silently collapse this to '' --
-      # a full scan instead of a diff, same as no restriction at all.
       # A repository can list paths the scan skips (regular expressions, one per line) in
       # .trufflehogignore -- for recorded API responses and similar fixtures that only look like
       # secrets. The list is read from the DEFAULT BRANCH, never from the checkout being scanned:
       # otherwise a pull request could add `.*` and hide its own secrets from its own scan. So a
       # new entry takes effect once it is merged. Without the file, nothing is excluded.
+      # A listed path is skipped in every scan, including full-history ones.
       - name: Read the secret-scan exclusions from the default branch
         id: exclude
         env:
-          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch || 'main' }}
         run: |
-          # Inside .git so the file is neither scanned nor tracked, and so it sits under the
-          # workspace the TruffleHog container mounts.
-          if git show "origin/${DEFAULT_BRANCH}:.trufflehogignore" > .git/trufflehog-exclude 2>/dev/null; then
+          # The fully qualified ref: `origin/<branch>` alone would let a pushed tag of that name
+          # win, because git resolves tags before remote-tracking branches.
+          # The file goes inside .git so it is neither scanned nor tracked, and so it sits under
+          # the workspace the TruffleHog container mounts. \r and trailing blanks are stripped,
+          # since TruffleHog takes every line literally and a CRLF would stop a pattern matching.
+          if git show "refs/remotes/origin/${DEFAULT_BRANCH}:.trufflehogignore" 2>/dev/null | sed -e 's/\r$//' -e 's/[[:space:]]*$//' > .git/trufflehog-exclude \
+            && [ -s .git/trufflehog-exclude ]; then
+            echo "Excluding the paths listed in .trufflehogignore on ${DEFAULT_BRANCH} from the scan."
             echo "args=--exclude-paths=.git/trufflehog-exclude" >> "$GITHUB_OUTPUT"
           else
+            echo "No .trufflehogignore on ${DEFAULT_BRANCH}; scanning every path."
             echo "args=" >> "$GITHUB_OUTPUT"
           fi
 
+      # merge_group is checked first and separately, rather than folded into the pull_request /
+      # pull_request_target clause: it has its own event fields (merge_group.base_sha/head_sha),
+      # not github.event.pull_request.*, which would be unset and silently collapse this to '' --
+      # a full scan instead of a diff, same as no restriction at all.
       - name: Scan for secrets
         uses: trufflesecurity/trufflehog@main
         with:
