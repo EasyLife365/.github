@@ -86,6 +86,40 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
+      # A repository can list paths the scan skips (regular expressions, one per line) in
+      # .trufflehogignore -- for recorded API responses and similar fixtures that only look like
+      # secrets. The list is read from the DEFAULT BRANCH, never from the checkout being scanned:
+      # otherwise a pull request could add `.*` and hide its own secrets from its own scan. So a
+      # new entry takes effect once it is merged. Without the file, nothing is excluded.
+      # A listed path is skipped in every scan, including full-history ones, and a pattern matches
+      # anywhere in a path. Anchor each entry (^path/to/file\.json$) and keep it as narrow as the
+      # fixture it covers: a loose one such as `fixtures/` also hides every later file under it.
+      # Treat any new or edited entry in a pull request as security-relevant.
+      - name: Read the secret-scan exclusions from the default branch
+        id: exclude
+        env:
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch || github.ref_name }}
+        run: |
+          # The fully qualified ref: `origin/<branch>` alone would let a pushed tag of that name
+          # win, because git resolves tags before remote-tracking branches.
+          # The file goes inside .git so it is neither scanned nor tracked, and so it sits under
+          # the workspace the TruffleHog container mounts. \r and trailing blanks are stripped,
+          # since TruffleHog takes every line literally and a CRLF would stop a pattern matching.
+          # A schedule payload carries no repository, so the branch falls back to the ref the run is on,
+          # which for a schedule is the default branch. show-ref checks the exact ref first, so a
+          # missing branch is reported as such and never resolved to some other ref.
+          if ! git show-ref --verify --quiet "refs/remotes/origin/${DEFAULT_BRANCH}"; then
+            echo "::warning::No refs/remotes/origin/${DEFAULT_BRANCH} in this checkout; scanning every path."
+            echo "args=" >> "$GITHUB_OUTPUT"
+          elif git show "refs/remotes/origin/${DEFAULT_BRANCH}:.trufflehogignore" 2>/dev/null | sed -e 's/\r$//' -e 's/[[:space:]]*$//' > .git/trufflehog-exclude \
+            && [ -s .git/trufflehog-exclude ]; then
+            echo "Excluding the paths listed in .trufflehogignore on ${DEFAULT_BRANCH} from the scan."
+            echo "args=--exclude-paths=.git/trufflehog-exclude" >> "$GITHUB_OUTPUT"
+          else
+            echo "No .trufflehogignore on ${DEFAULT_BRANCH}; scanning every path."
+            echo "args=" >> "$GITHUB_OUTPUT"
+          fi
+
       # merge_group is checked first and separately, rather than folded into the pull_request /
       # pull_request_target clause: it has its own event fields (merge_group.base_sha/head_sha),
       # not github.event.pull_request.*, which would be unset and silently collapse this to '' --
@@ -95,7 +129,7 @@ jobs:
         with:
           base: ${{ (github.event_name == 'merge_group' && !inputs.full-history) && github.event.merge_group.base_sha || (((github.event_name == 'pull_request' || github.event_name == 'pull_request_target') && !inputs.full-history) && github.event.pull_request.base.sha) || '' }}
           head: ${{ (github.event_name == 'merge_group' && !inputs.full-history) && github.event.merge_group.head_sha || (((github.event_name == 'pull_request' || github.event_name == 'pull_request_target') && !inputs.full-history) && github.event.pull_request.head.sha) || '' }}
-          extra_args: --results=verified,unknown
+          extra_args: --results=verified,unknown ${{ steps.exclude.outputs.args }}
 
   dotnet-dependencies:
     name: .NET dependencies
