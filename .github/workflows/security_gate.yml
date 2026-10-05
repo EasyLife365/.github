@@ -90,12 +90,30 @@ jobs:
       # pull_request_target clause: it has its own event fields (merge_group.base_sha/head_sha),
       # not github.event.pull_request.*, which would be unset and silently collapse this to '' --
       # a full scan instead of a diff, same as no restriction at all.
+      # A repository can list paths the scan skips (regular expressions, one per line) in
+      # .trufflehogignore -- for recorded API responses and similar fixtures that only look like
+      # secrets. The list is read from the DEFAULT BRANCH, never from the checkout being scanned:
+      # otherwise a pull request could add `.*` and hide its own secrets from its own scan. So a
+      # new entry takes effect once it is merged. Without the file, nothing is excluded.
+      - name: Read the secret-scan exclusions from the default branch
+        id: exclude
+        env:
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        run: |
+          # Inside .git so the file is neither scanned nor tracked, and so it sits under the
+          # workspace the TruffleHog container mounts.
+          if git show "origin/${DEFAULT_BRANCH}:.trufflehogignore" > .git/trufflehog-exclude 2>/dev/null; then
+            echo "args=--exclude-paths=.git/trufflehog-exclude" >> "$GITHUB_OUTPUT"
+          else
+            echo "args=" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Scan for secrets
         uses: trufflesecurity/trufflehog@main
         with:
           base: ${{ (github.event_name == 'merge_group' && !inputs.full-history) && github.event.merge_group.base_sha || (((github.event_name == 'pull_request' || github.event_name == 'pull_request_target') && !inputs.full-history) && github.event.pull_request.base.sha) || '' }}
           head: ${{ (github.event_name == 'merge_group' && !inputs.full-history) && github.event.merge_group.head_sha || (((github.event_name == 'pull_request' || github.event_name == 'pull_request_target') && !inputs.full-history) && github.event.pull_request.head.sha) || '' }}
-          extra_args: --results=verified,unknown
+          extra_args: --results=verified,unknown ${{ steps.exclude.outputs.args }}
 
   dotnet-dependencies:
     name: .NET dependencies
