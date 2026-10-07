@@ -83,10 +83,10 @@ jobs:
       cancel-in-progress: true
     env:
       HAS_APP_KEY: ${{ secrets.APP_PRIVATE_KEY != '' }}
-      IS_DEPENDABOT: ${{ github.event_name == 'pull_request_target' && github.event.pull_request.user.login == 'dependabot[bot]' && github.event.pull_request.head.repo.full_name == github.repository && startsWith(github.event.pull_request.head.ref, 'dependabot/npm_and_yarn/') }}
+      IS_DEPENDABOT: ${{ github.event_name == 'pull_request_target' && github.event.pull_request.user.login == 'dependabot[bot]' && github.event.pull_request.head.repo.full_name == github.repository && startsWith(github.event.pull_request.head.ref, 'dependabot/npm_and_yarn/') && github.event.pull_request.base.ref == github.event.repository.default_branch }}
       # The person who pushed, not the author of the pull request: a human pushing to the branch
       # leaves the author as dependabot[bot] but changes the actor.
-      FIX_ALLOWED: ${{ github.actor == 'dependabot[bot]' }}
+      FIX_ALLOWED: ${{ github.actor == 'dependabot[bot]' && github.triggering_actor == 'dependabot[bot]' }}
     steps:
       - name: Not a Dependabot npm/yarn pull request
         if: env.IS_DEPENDABOT != 'true'
@@ -107,6 +107,8 @@ jobs:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
         run: |
           git log "$BASE_SHA..HEAD" --format='%B%n@@@END@@@' > "$RUNNER_TEMP/messages.txt"
+          CHANGED_FILES="$(git diff --no-renames --name-only "$BASE_SHA...HEAD")"
+          export CHANGED_FILES
           node --input-type=module <<'EOF'
           import { readFileSync, existsSync, appendFileSync, writeFileSync } from 'node:fs';
 
@@ -118,6 +120,10 @@ jobs:
             out('missing', '');
             process.exit(0);
           }
+
+          // Only the root manifest is checked; say so rather than pass silently on the others.
+          const others = (process.env.CHANGED_FILES ?? '').split('\n').filter((p) => /\/(package\.json|yarn\.lock|package-lock\.json)$/.test(p));
+          if (others.length) console.log(`::warning::Only the root package.json is checked; not covered: ${others.join(', ')}`);
 
           const messages = readFileSync(`${process.env.RUNNER_TEMP}/messages.txt`, 'utf8');
 
@@ -132,8 +138,8 @@ jobs:
           }
           const unquote = (s) => s.replace(/^["']|["']$/g, '');
           // Values come from commit messages, so they are checked before they can reach package.json.
-          const validName = (n) => /^(@[a-z0-9][a-z0-9._~-]*\/)?[a-z0-9][a-z0-9._~-]*$/.test(n);
-          const validVersion = (v) => /^\d+\.\d+\.\d+$/.test(v);
+          const validName = (n) => /^(@[a-z0-9][a-z0-9._~-]*\/)?[a-z0-9][a-z0-9._~-]*$/i.test(n);
+          const validVersion = (v) => /^\d+\.\d+\.\d+(-[0-9A-Za-z.-]+)?$/.test(v);
 
           // `updated-dependencies:` is a YAML list Dependabot writes into the commit body; scoped
           // names are quoted ("@babel/core").
@@ -146,7 +152,7 @@ jobs:
             const name = unquote(m[1]), version = unquote(m[2]), type = unquote(m[3]);
             if (!type.startsWith('indirect')) continue;
             if (!validName(name) || !validVersion(version)) {
-              console.log(`::error::Ignoring an indirect entry with an unexpected name or version: ${JSON.stringify([name, version])}`);
+              console.log(`::error::Failing on an indirect entry with an unexpected name or version (add its pin by hand): ${JSON.stringify([name, version])}`);
               process.exit(1);
             }
             if (!bumped.has(name) || cmp(version, bumped.get(name)) > 0) bumped.set(name, version);
@@ -171,6 +177,24 @@ jobs:
 
           const missing = [...bumped].filter(([n, v]) => !pinned(n, v));
 
+          // A name-only pin moves every dependent of the package. When the lockfile holds more than
+          // one major of a bumped package, a human must choose the pin (no auto-fix).
+          let multiMajor = [];
+          if (existsSync('yarn.lock')) {
+            const majors = new Map();
+            let current = [];
+            for (const line of readFileSync('yarn.lock', 'utf8').split(/\r?\n/)) {
+              if (line && !line.startsWith(' ') && !line.startsWith('#') && line.endsWith(':')) {
+                current = line.slice(0, -1).split(',').map((p) => unquote(p.trim()).replace(/@[^@]*$/, ''));
+              } else {
+                const v = /^\s+version\s+"?([^"\s]+)"?/.exec(line);
+                if (v) for (const n of current) majors.set(n, new Set([...(majors.get(n) ?? []), v[1].split('.')[0]]));
+              }
+            }
+            multiMajor = missing.filter(([n]) => (majors.get(n)?.size ?? 0) > 1).map(([n]) => n);
+          }
+          out('multimajor', multiMajor.length ? 'true' : '');
+
           console.log(`Indirect bumps: ${bumped.size ? [...bumped].map(([n, v]) => `${n}@${v}`).join(', ') : 'none'}`);
           if (!missing.length) {
             summary(bumped.size ? 'All indirect bumps are pinned in package.json.' : 'No indirect bumps in this pull request.');
@@ -185,7 +209,7 @@ jobs:
 
           const snippet = JSON.stringify({ [field]: pins }, null, 2);
           for (const [n] of missing) console.log(`::error file=package.json::${n} is bumped in the lockfile only - add it to "${field}".`);
-          summary(`### Indirect bumps without a package.json pin\n\nDependabot bumped indirect dependencies, but package.json does not pin them, so only the lockfile changed and the next install can undo it. Add to package.json, then run the install to refresh the lockfile:\n\n\`\`\`json\n${snippet}\n\`\`\``);
+          summary(`### Indirect bumps without a package.json pin\n\nDependabot bumped indirect dependencies, but package.json does not pin them, so only the lockfile changed and the next install can undo it. Add to package.json, then run the install to refresh the lockfile:\n\n\`\`\`json\n${snippet}\n\`\`\`${multiMajor.length ? `\n\nThe lockfile holds more than one major of ${multiMajor.join(', ')}: choose the pin by hand, a name-only pin would move every dependent.` : ''}`);
           console.log(`Add to package.json:\n${snippet}`);
           EOF
 
@@ -193,14 +217,15 @@ jobs:
       # lockfile is installed on: .yarnrc, .npmrc and .yarn/ are then the base's own.
       - name: Safe to auto-fix
         id: safe
-        if: steps.check.outputs.missing == 'true' && env.FIX_ALLOWED == 'true' && env.HAS_APP_KEY == 'true'
+        if: steps.check.outputs.missing == 'true' && steps.check.outputs.multimajor != 'true' && env.FIX_ALLOWED == 'true' && env.HAS_APP_KEY == 'true'
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
         run: |
-          unexpected="$(git diff --name-only "$BASE_SHA...HEAD" | grep -vxE 'package\.json|yarn\.lock|package-lock\.json' || true)"
+          unexpected="$(git diff --no-renames --name-only "$BASE_SHA...HEAD" | grep -vxE 'package\.json|yarn\.lock|package-lock\.json' || true)"
           if [ -n "$unexpected" ]; then
             echo "Not auto-fixing; the branch also changes:"
             echo "$unexpected"
+            echo "::notice::Not auto-fixing: the branch also changes files other than package.json and the lockfile."
             echo "safe=" >> "$GITHUB_OUTPUT"
           else
             echo "safe=true" >> "$GITHUB_OUTPUT"
@@ -208,9 +233,8 @@ jobs:
 
       - name: Set up Node
         if: steps.safe.outputs.safe == 'true'
+        # No NODE_AUTH_TOKEN here: setup-node would export it to every later step, the push included.
         uses: actions/setup-node@v7
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_PACKAGE_TOKEN }}
         with:
           node-version: ${{ inputs.node-version }}
           registry-url: 'https://npm.pkg.github.com'
@@ -244,7 +268,7 @@ jobs:
           if [ -f yarn.lock ]; then yarn install --ignore-scripts --non-interactive; else npm install --ignore-scripts --package-lock-only; fi
           # Whatever ran during the install must have left HEAD alone and touched nothing else.
           [ "$(git rev-parse HEAD)" = "$PR_HEAD_SHA" ] || { echo "::error::HEAD moved during the install; not pushing."; exit 1; }
-          unexpected="$(git status --porcelain | awk '{print $2}' | grep -vxE 'package\.json|yarn\.lock|package-lock\.json' || true)"
+          unexpected="$(git -c core.fsmonitor=false status --porcelain | awk '{print $2}' | grep -vxE 'package\.json|yarn\.lock|package-lock\.json' || true)"
           if [ -n "$unexpected" ]; then echo "::error::Unexpected files changed: $unexpected; not pushing."; exit 1; fi
           # The lockfile may legitimately stay as is (yarn 1 records no resolutions entry when the
           # lock already holds the pinned version); package.json must have changed.
@@ -273,11 +297,17 @@ jobs:
           REPO: ${{ github.repository }}
         run: |
           set -euo pipefail
-          git -c core.hooksPath=/dev/null -c user.name='easylife-agents[bot]' \
+          # Ignore any git configuration the install could have left behind, and keep the token off
+          # the command line.
+          export GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1
+          git -c core.hooksPath=/dev/null -c core.fsmonitor=false -c user.name='easylife-agents[bot]' \
             -c user.email='162133204+easylife-agents[bot]@users.noreply.github.com' \
             commit -a -m "Pin the indirect dependencies this bump fixes in package.json"
           [ "$(git rev-parse HEAD~1)" = "$PR_HEAD_SHA" ] || { echo "::error::Unexpected history; not pushing."; exit 1; }
-          git push "https://x-access-token:${APP_TOKEN}@github.com/${REPO}.git" "HEAD:refs/heads/${HEAD_REF}"
+          auth="$(printf 'x-access-token:%s' "$APP_TOKEN" | base64 -w0)"
+          echo "::add-mask::$auth"
+          GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=http.https://github.com/.extraheader GIT_CONFIG_VALUE_0="AUTHORIZATION: basic $auth" \
+            git -c core.hooksPath=/dev/null -c core.fsmonitor=false push --no-verify "https://github.com/${REPO}.git" "HEAD:refs/heads/${HEAD_REF}"
           echo "pushed=true" >> "$GITHUB_OUTPUT"
 
       - name: Report
