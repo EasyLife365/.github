@@ -122,7 +122,7 @@ jobs:
           const messages = readFileSync(`${process.env.RUNNER_TEMP}/messages.txt`, 'utf8');
 
           function parts(v) {
-            const m = /^[~^<>=\s]*v?(\d+)\.(\d+)\.(\d+)/.exec(v);
+            const m = /^[~^>=\s]*v?(\d+)\.(\d+)\.(\d+)/.exec(v);
             return m ? [+m[1], +m[2], +m[3]] : null;
           }
           function cmp(a, b) {
