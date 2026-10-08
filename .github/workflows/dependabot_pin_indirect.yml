@@ -50,6 +50,12 @@
 #         reviewer: plamber       # optional; requested after a fix, or when none was possible
 #       secrets:
 #         GITHUB_PACKAGE_TOKEN: ${{ secrets.PACKAGE_TOKEN_READONLY }}   # auto-fix only
+#         # The key is a secret of the repository's dependabot-pin environment, which the caller job
+#         # cannot use; GitHub still requires the caller to pass it, and it then resolves from the
+#         # environment of the finish job. Without this line finish gets an empty key.
+#         APP_PRIVATE_KEY: ${{ secrets.APP_PRIVATE_KEY }}                # auto-fix only
+# A repository that leaves this line out gets a red check and nobody is asked: finish cannot mint a token
+# without the key, so it cannot comment or request a review either.
 name: Pin indirect Dependabot bumps
 
 on:
@@ -78,11 +84,15 @@ on:
       GITHUB_PACKAGE_TOKEN:
         description: Read-only packages token; only the auto-fix install needs it, to resolve @easylife365/*.
         required: false
+      APP_PRIVATE_KEY:
+        description: Callers pass APP_PRIVATE_KEY from their own secrets context, which is empty there; the value comes from the dependabot-pin environment of the finish job.
+        required: false
 
 permissions:
   contents: read
 
 jobs:
+  # The pin job holds no app key and must never reference secrets.APP_PRIVATE_KEY; only finish does.
   pin:
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -578,9 +588,23 @@ jobs:
           console.log('Result verified.');
           EOF
 
+      # GitHub resolves an environment secret passed by the caller only inside this job. Fail once, with
+      # the reason, rather than twice inside the token action.
+      - name: The key must be available
+        id: key
+        # Runs after an earlier failure too (the comment path below depends on it), but only when a token will be needed.
+        if: ${{ !cancelled() && (env.FIX_READY == 'true' || steps.plan.outputs.missing == 'true') }}
+        env:
+          HAS_KEY: ${{ secrets.APP_PRIVATE_KEY != '' }}
+        run: |
+          if [ "$HAS_KEY" != "true" ]; then
+            echo "::error::APP_PRIVATE_KEY is empty in the finish job. It must be a secret of this repository's dependabot-pin environment, and the caller workflow must pass it with APP_PRIVATE_KEY set to its own secrets.APP_PRIVATE_KEY. Never store it as a repository, organisation or Dependabot secret."
+            exit 1
+          fi
+
       - name: Generate app token (push)
         id: app-token
-        if: env.FIX_READY == 'true' && steps.verify.outcome == 'success'
+        if: env.FIX_READY == 'true' && steps.verify.outcome == 'success' && steps.key.outcome == 'success'
         uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3
         with:
           app-id: ${{ inputs.app-id }}
@@ -593,7 +617,7 @@ jobs:
       # Nothing is pushed on this path, so the token can only comment and request a review.
       - name: Generate app token (comment only)
         id: comment-token
-        if: ${{ !cancelled() && steps.plan.outputs.missing == 'true' && steps.app-token.outcome != 'success' }}
+        if: ${{ !cancelled() && steps.plan.outputs.missing == 'true' && steps.key.outcome == 'success' && steps.app-token.outcome != 'success' }}
         uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3
         with:
           app-id: ${{ inputs.app-id }}
