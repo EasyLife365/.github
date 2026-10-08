@@ -1,8 +1,0 @@
-# actionlint reads this file automatically from the repository root.
-paths:
-  # APP_PRIVATE_KEY is deliberately not declared under workflow_call.secrets: it is a secret of the
-  # calling repository's dependabot-pin environment, read by the finish job (which names that
-  # environment), so no caller can pass an org-wide secret around the environment's branch rule.
-  .github/workflows/dependabot_pin_indirect.yml:
-    ignore:
-      - 'property "app_private_key" is not defined in object type'
