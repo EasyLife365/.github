@@ -1,43 +1,42 @@
-# Require a package.json pin for every indirect Dependabot bump (EasyLife365/.github#144).
+# Require a package.json pin for every indirect Dependabot bump (EasyLife365/.github#144, #147).
 #
-# Dependabot can only edit yarn.lock for a transitive dependency: nothing in package.json names
-# it. The fix is then nothing but a lockfile line, which the next `yarn install` that touches the
-# package is free to undo, and which a library's consumers never see at all. Patch day already
-# pins such packages through `resolutions` (`overrides` for npm); this makes a Dependabot bump
-# meet the same bar -- package.json and the lockfile change together.
+# Dependabot can only edit the lockfile for a transitive dependency: nothing in package.json names
+# it. The fix is then nothing but a lockfile line, which the next install that touches the package
+# is free to undo, and which a library's consumers never see at all. Patch day already pins such
+# packages through `resolutions` (`overrides` for npm); this makes a Dependabot bump meet the same
+# bar -- package.json and the lockfile change together.
 #
-# What it does, for a same-repository pull request opened by dependabot[bot] from a
-# dependabot/npm_and_yarn/ branch:
-#   1. reads every `dependency-type: indirect` entry from the `updated-dependencies` block of the
-#      pull request's commits,
-#   2. checks the root package.json carries a pin (resolutions or overrides) whose floor is at
-#      least the bumped version,
-#   3. fails, naming the exact entries to add, when it does not -- or, when the caller supplies
-#      a GitHub App key, adds the pin, refreshes the lockfile and pushes to the pull request
-#      branch. The push uses an app token because a push made with GITHUB_TOKEN starts no
-#      workflow, which would leave the required checks pending on the new head forever.
+# For a same-repository pull request opened by dependabot[bot] from a dependabot/npm_and_yarn/ branch:
+#   job `pin`     reads every `dependency-type: indirect` entry from the pull request's commits and
+#                 checks the root package.json carries a pin (resolutions or overrides) whose floor
+#                 is at least the bumped version. It holds NO app key. When auto-fix is on and the
+#                 pull request is safe to fix (a yarn.lock repo), it adds the pin, refreshes the
+#                 lockfile with `yarn install --ignore-scripts` and uploads only package.json and
+#                 yarn.lock. Its check stays red until the pin is in the head: the push by `finish`
+#                 starts a new run, which is green. A failing `finish` therefore never lets a
+#                 lockfile-only change merge.
+#   job `finish`  runs on a fresh runner in the `dependabot-pin` environment (restrict it to the
+#                 default branch, and keep the app key as a secret of that environment only). It
+#                 derives the plan again from the commit messages (the artifact is not trusted),
+#                 verifies package.json is exactly the head plus the planned pins and that only
+#                 those packages' yarn.lock blocks changed (registry tarballs with integrity),
+#                 mints a short-lived app token, pushes one commit, and asks `reviewer` for review. When nothing could be fixed it leaves one comment with the
+#                 exact pin and asks the same reviewer. A push by GITHUB_TOKEN would start no
+#                 workflow, which is why an app token is used: the checks re-run on the new head.
 # Direct dependencies are left alone (Dependabot already edits package.json for them), as is any
 # other pull request: the job still runs and passes, so the check is always present for a
 # required-status rule.
 #
-# The check step reads package.json and commit messages and executes nothing from the pull
-# request. The auto-fix does run `yarn install` on the head, so it is held to a much narrower
-# gate, because the branch is writable by anyone with write access while its author stays
-# dependabot[bot]:
-#   - github.actor must itself be dependabot[bot] (the person who pushed), not just the author;
-#   - the pull request may differ from its base only in package.json and the lockfile, so
-#     .yarnrc / .npmrc / .yarn/ (yarn-path, registry redirects) are the trusted base's own;
-#   - the install uses --ignore-scripts and YARN_IGNORE_PATH, with the packages token but no
-#     app token and no persisted git credentials;
-#   - the app token is minted only after the install, scoped to contents:write on this
-#     repository, and used for one push of exactly one commit on top of the verified head,
-#     with git hooks disabled.
+# Why two jobs: the install can run package-manager code. It runs here with only the read-only
+# packages token and `--ignore-scripts`, `YARN_IGNORE_PATH`, on a branch whose diff against its
+# trusted base is limited to package.json and the lockfile and whose actor and triggering actor
+# are dependabot[bot]. The app key is never in that job.
 # Once the app has pushed, Dependabot treats the branch as edited and refuses `@dependabot
 # rebase`; `@dependabot recreate` rebuilds it and the pin is added again.
 #
-# Caller (pull_request_target so secrets reach a Dependabot run; merge_group so a merge queue
-# gets the check too -- do NOT put an `if:` on the job, a skipped caller job reports under its
-# bare job id and the required name would never appear):
+# Caller (pull_request_target so secrets reach a Dependabot run; merge_group so a merge queue gets
+# the check too -- do NOT put an `if:` on the job, a skipped caller job reports under its bare job
+# id and the required name would never appear):
 #
 #   on:
 #     pull_request_target:
@@ -46,9 +45,11 @@
 #   jobs:
 #     pin:
 #       uses: EasyLife365/.github/.github/workflows/dependabot_pin_indirect.yml@main
+#       with:
+#         auto-fix: true          # optional; needs the dependabot-pin environment and key
+#         reviewer: plamber       # optional; requested after a fix, or when none was possible
 #       secrets:
 #         GITHUB_PACKAGE_TOKEN: ${{ secrets.PACKAGE_TOKEN_READONLY }}   # auto-fix only
-#         APP_PRIVATE_KEY: ${{ secrets.EL_AGENTS_APP_PRIVATE_KEY }}     # auto-fix only
 name: Pin indirect Dependabot bumps
 
 on:
@@ -63,12 +64,19 @@ on:
         required: false
         type: string
         default: '4962821'
+      auto-fix:
+        description: Add the pin and push it. Needs the dependabot-pin environment holding APP_PRIVATE_KEY.
+        required: false
+        type: boolean
+        default: false
+      reviewer:
+        description: GitHub login to request as reviewer after a fix, or when no fix was possible.
+        required: false
+        type: string
+        default: ''
     secrets:
       GITHUB_PACKAGE_TOKEN:
-        description: Read-only packages token; only the auto-fix needs it, to resolve @easylife365/*.
-        required: false
-      APP_PRIVATE_KEY:
-        description: Private key of the app; without it the workflow only checks and fails.
+        description: Read-only packages token; only the auto-fix install needs it, to resolve @easylife365/*.
         required: false
 
 permissions:
@@ -79,13 +87,16 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     concurrency:
-      group: pin-indirect-${{ github.event.pull_request.number || github.run_id }}
+      group: pin-indirect-${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
       cancel-in-progress: true
+    outputs:
+      missing: ${{ steps.check.outputs.missing }}
+      fix-ready: ${{ steps.fix.outputs.ready }}
     env:
-      HAS_APP_KEY: ${{ secrets.APP_PRIVATE_KEY != '' }}
+      AUTO_FIX: ${{ inputs.auto-fix }}
       IS_DEPENDABOT: ${{ github.event_name == 'pull_request_target' && github.event.pull_request.user.login == 'dependabot[bot]' && github.event.pull_request.head.repo.full_name == github.repository && startsWith(github.event.pull_request.head.ref, 'dependabot/npm_and_yarn/') && github.event.pull_request.base.ref == github.event.repository.default_branch }}
-      # The person who pushed, not the author of the pull request: a human pushing to the branch
-      # leaves the author as dependabot[bot] but changes the actor.
+      # The person who pushed or re-ran, not the author of the pull request: a human pushing to the
+      # branch leaves the author as dependabot[bot] but changes the actor.
       FIX_ALLOWED: ${{ github.actor == 'dependabot[bot]' && github.triggering_actor == 'dependabot[bot]' }}
     steps:
       - name: Not a Dependabot npm/yarn pull request
@@ -93,7 +104,7 @@ jobs:
         run: echo "Nothing to check - not a same-repository npm/yarn pull request opened by dependabot[bot]."
 
       # No credential is persisted: the install below must not be able to read a token from .git/config.
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         if: env.IS_DEPENDABOT == 'true'
         with:
           ref: ${{ github.event.pull_request.head.sha }}
@@ -217,10 +228,15 @@ jobs:
       # lockfile is installed on: .yarnrc, .npmrc and .yarn/ are then the base's own.
       - name: Safe to auto-fix
         id: safe
-        if: steps.check.outputs.missing == 'true' && steps.check.outputs.multimajor != 'true' && env.FIX_ALLOWED == 'true' && env.HAS_APP_KEY == 'true'
+        if: steps.check.outputs.missing == 'true' && steps.check.outputs.multimajor != 'true' && env.FIX_ALLOWED == 'true' && env.AUTO_FIX == 'true'
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
         run: |
+          if [ ! -f yarn.lock ]; then
+            echo "::notice::Not auto-fixing: only yarn.lock repositories are supported."
+            echo "safe=" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
           unexpected="$(git diff --no-renames --name-only "$BASE_SHA...HEAD" | grep -vxE 'package\.json|yarn\.lock|package-lock\.json' || true)"
           if [ -n "$unexpected" ]; then
             echo "Not auto-fixing; the branch also changes:"
@@ -233,8 +249,8 @@ jobs:
 
       - name: Set up Node
         if: steps.safe.outputs.safe == 'true'
-        # No NODE_AUTH_TOKEN here: setup-node would export it to every later step, the push included.
-        uses: actions/setup-node@v7
+        # No NODE_AUTH_TOKEN here: setup-node would export it to every later step.
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
         with:
           node-version: ${{ inputs.node-version }}
           registry-url: 'https://npm.pkg.github.com'
@@ -265,41 +281,337 @@ jobs:
           }
           writeFileSync('package.json', JSON.stringify(pkg, null, indent) + (raw.endsWith('\n') ? '\n' : ''));
           EOF
-          if [ -f yarn.lock ]; then yarn install --ignore-scripts --non-interactive; else npm install --ignore-scripts --package-lock-only; fi
+          # Registry text printed by the install must not be able to issue workflow commands.
+          stop="$(openssl rand -hex 16)"
+          echo "::stop-commands::$stop"
+          yarn install --ignore-scripts --non-interactive
+          echo "::$stop::"
           # Whatever ran during the install must have left HEAD alone and touched nothing else.
           [ "$(git rev-parse HEAD)" = "$PR_HEAD_SHA" ] || { echo "::error::HEAD moved during the install; not pushing."; exit 1; }
           unexpected="$(git -c core.fsmonitor=false status --porcelain | awk '{print $2}' | grep -vxE 'package\.json|yarn\.lock|package-lock\.json' || true)"
           if [ -n "$unexpected" ]; then echo "::error::Unexpected files changed: $unexpected; not pushing."; exit 1; fi
-          # The lockfile may legitimately stay as is (yarn 1 records no resolutions entry when the
-          # lock already holds the pinned version); package.json must have changed.
+          # The lockfile may legitimately stay as is; package.json must have changed.
           git diff --quiet -- package.json && { echo "::error::package.json did not change; not pushing."; exit 1; }
+          mkdir -p "$RUNNER_TEMP/result"
+          cp package.json yarn.lock "$RUNNER_TEMP/result/"
           echo "ready=true" >> "$GITHUB_OUTPUT"
 
-      # Minted only now, after the install has finished, and limited to this repository.
-      - name: Generate app token
+      - name: Upload the result
+        if: ${{ !cancelled() && steps.fix.outputs.ready == 'true' }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: pin-result
+          path: ${{ runner.temp }}/result
+          retention-days: 1
+          # "Re-run failed jobs" uploads again under the same name.
+          overwrite: true
+
+      # Red until the pin is in the head: the push by finish starts a new run, which is green. If
+      # finish fails the pull request stays red and cannot merge without the pin.
+      - name: Report
+        if: steps.check.outputs.missing == 'true'
+        env:
+          READY: ${{ steps.fix.outputs.ready }}
+        run: |
+          if [ "$READY" = "true" ]; then
+            echo "::error::The pin is prepared but not in the head yet; the finish job pushes it and the checks run again."
+          else
+            echo "::error::Indirect bump is not pinned in package.json (see the job summary for the exact entries)."
+          fi
+          exit 1
+
+  finish:
+    needs: pin
+    # Also when pin failed: that is the case where a human needs to be asked. Not when it was
+    # cancelled (a newer run replaces it).
+    if: ${{ !cancelled() && needs.pin.result != 'cancelled' && inputs.auto-fix && needs.pin.outputs.missing == 'true' && github.event_name == 'pull_request_target' && github.event.pull_request.user.login == 'dependabot[bot]' && github.event.pull_request.head.repo.full_name == github.repository && startsWith(github.event.pull_request.head.ref, 'dependabot/npm_and_yarn/') && github.event.pull_request.base.ref == github.event.repository.default_branch }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    concurrency:
+      group: pin-finish-${{ github.event.pull_request.number }}
+      cancel-in-progress: false
+    # Restrict this environment to the default branch and keep APP_PRIVATE_KEY in it, so no other
+    # branch's workflow can read the key.
+    environment: dependabot-pin
+    permissions:
+      contents: read
+    env:
+      # pin's output can be forged by anything that ran in its install step, so the actor gate is
+      # checked again here and the plan is re-derived below instead of read from the artifact.
+      FIX_READY: ${{ needs.pin.outputs.fix-ready == 'true' && github.actor == 'dependabot[bot]' && github.triggering_actor == 'dependabot[bot]' }}
+      REVIEWER: ${{ inputs.reviewer }}
+      PR_NUMBER: ${{ github.event.pull_request.number }}
+      PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+      HEAD_REF: ${{ github.event.pull_request.head.ref }}
+      REPO: ${{ github.repository }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Work out the plan again
+        id: plan
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          git log "$BASE_SHA..HEAD" --format='%B%n@@@END@@@' > "$RUNNER_TEMP/messages.txt"
+          CHANGED_FILES="$(git diff --no-renames --name-only "$BASE_SHA...HEAD")"
+          export CHANGED_FILES
+          node --input-type=module <<'EOF'
+          import { readFileSync, existsSync, appendFileSync, writeFileSync } from 'node:fs';
+
+          const out = (k, v) => appendFileSync(process.env.GITHUB_OUTPUT, `${k}=${v}\n`);
+          const summary = (s) => appendFileSync(process.env.GITHUB_STEP_SUMMARY, `${s}\n`);
+
+          if (!existsSync('package.json')) {
+            summary('No root package.json - nothing to pin.');
+            out('missing', '');
+            process.exit(0);
+          }
+
+          // Only the root manifest is checked; say so rather than pass silently on the others.
+          const others = (process.env.CHANGED_FILES ?? '').split('\n').filter((p) => /\/(package\.json|yarn\.lock|package-lock\.json)$/.test(p));
+          if (others.length) console.log(`::warning::Only the root package.json is checked; not covered: ${others.join(', ')}`);
+
+          const messages = readFileSync(`${process.env.RUNNER_TEMP}/messages.txt`, 'utf8');
+
+          function parts(v) {
+            const m = /^[~^>=\s]*v?(\d+)\.(\d+)\.(\d+)/.exec(v);
+            return m ? [+m[1], +m[2], +m[3]] : null;
+          }
+          function cmp(a, b) {
+            const x = parts(a), y = parts(b);
+            for (let i = 0; i < 3; i++) if (x[i] !== y[i]) return x[i] - y[i];
+            return 0;
+          }
+          const unquote = (s) => s.replace(/^["']|["']$/g, '');
+          // Values come from commit messages, so they are checked before they can reach package.json.
+          const validName = (n) => /^(@[a-z0-9][a-z0-9._~-]*\/)?[a-z0-9][a-z0-9._~-]*$/i.test(n);
+          const validVersion = (v) => /^\d+\.\d+\.\d+(-[0-9A-Za-z.-]+)?$/.test(v);
+
+          // `updated-dependencies:` is a YAML list Dependabot writes into the commit body; scoped
+          // names are quoted ("@babel/core").
+          const hasBlock = /updated-dependencies:/.test(messages);
+          const bumped = new Map(); // name -> highest version
+          let entries = 0;
+          for (const m of messages.matchAll(
+            /-\s+dependency-name:\s*(\S+)\s*\n\s+dependency-version:\s*(\S+)\s*\n\s+dependency-type:\s*(\S+)/g)) {
+            entries++;
+            const name = unquote(m[1]), version = unquote(m[2]), type = unquote(m[3]);
+            if (!type.startsWith('indirect')) continue;
+            if (!validName(name) || !validVersion(version)) {
+              console.log(`::error::Failing on an indirect entry with an unexpected name or version (add its pin by hand): ${JSON.stringify([name, version])}`);
+              process.exit(1);
+            }
+            if (!bumped.has(name) || cmp(version, bumped.get(name)) > 0) bumped.set(name, version);
+          }
+          if (hasBlock && entries === 0) {
+            // Format drift must not read as "nothing to pin".
+            console.log('::error::The commit has an updated-dependencies block but no entry could be parsed.');
+            process.exit(1);
+          }
+
+          // A pin has a floor only when it is a plain range with a full x.y.z (^1.2.3, ~1.2.3,
+          // >=1.2.3, 1.2.3); "*", "latest", "^7" or "7.x" guarantee nothing.
+          const floorOf = (range) => (typeof range === 'string' && parts(range)) ? range : null;
+          // yarn also accepts "**/name" and "parent/**/name"; the part after the last "**/" names it.
+          const keyMatches = (key, name) => key === name || key.split('**/').pop() === name;
+
+          const raw = readFileSync('package.json', 'utf8');
+          const pkg = JSON.parse(raw);
+          const pinned = (name, version) => ['resolutions', 'overrides'].some((field) =>
+            Object.entries(pkg[field] ?? {}).some(([k, v]) =>
+              keyMatches(k, name) && floorOf(v) && cmp(floorOf(v), version) >= 0));
+
+          const missing = [...bumped].filter(([n, v]) => !pinned(n, v));
+
+          // A name-only pin moves every dependent of the package. When the lockfile holds more than
+          // one major of a bumped package, a human must choose the pin (no auto-fix).
+          let multiMajor = [];
+          if (existsSync('yarn.lock')) {
+            const majors = new Map();
+            let current = [];
+            for (const line of readFileSync('yarn.lock', 'utf8').split(/\r?\n/)) {
+              if (line && !line.startsWith(' ') && !line.startsWith('#') && line.endsWith(':')) {
+                current = line.slice(0, -1).split(',').map((p) => unquote(p.trim()).replace(/@[^@]*$/, ''));
+              } else {
+                const v = /^\s+version\s+"?([^"\s]+)"?/.exec(line);
+                if (v) for (const n of current) majors.set(n, new Set([...(majors.get(n) ?? []), v[1].split('.')[0]]));
+              }
+            }
+            multiMajor = missing.filter(([n]) => (majors.get(n)?.size ?? 0) > 1).map(([n]) => n);
+          }
+          out('multimajor', multiMajor.length ? 'true' : '');
+
+          console.log(`Indirect bumps: ${bumped.size ? [...bumped].map(([n, v]) => `${n}@${v}`).join(', ') : 'none'}`);
+          if (!missing.length) {
+            summary(bumped.size ? 'All indirect bumps are pinned in package.json.' : 'No indirect bumps in this pull request.');
+            out('missing', '');
+            process.exit(0);
+          }
+
+          const field = existsSync('yarn.lock') ? 'resolutions' : 'overrides';
+          const pins = Object.fromEntries(missing.map(([n, v]) => [n, `^${v}`]));
+          writeFileSync(`${process.env.RUNNER_TEMP}/pins.json`, JSON.stringify({ field, pins }));
+          out('missing', 'true');
+
+          const snippet = JSON.stringify({ [field]: pins }, null, 2);
+          for (const [n] of missing) console.log(`::error file=package.json::${n} is bumped in the lockfile only - add it to "${field}".`);
+          summary(`### Indirect bumps without a package.json pin\n\nDependabot bumped indirect dependencies, but package.json does not pin them, so only the lockfile changed and the next install can undo it. Add to package.json, then run the install to refresh the lockfile:\n\n\`\`\`json\n${snippet}\n\`\`\`${multiMajor.length ? `\n\nThe lockfile holds more than one major of ${multiMajor.join(', ')}: choose the pin by hand, a name-only pin would move every dependent.` : ''}`);
+          console.log(`Add to package.json:\n${snippet}`);
+          EOF
+
+      - name: The plan must exist when a fix is claimed
+        if: env.FIX_READY == 'true' && steps.plan.outputs.missing != 'true'
+        run: |
+          echo "::error::A fix was claimed but the pins could not be derived here; not pushing."
+          exit 1
+
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        if: env.FIX_READY == 'true'
+        with:
+          name: pin-result
+          path: ${{ runner.temp }}/result
+
+      # The uploaded files may differ from the head only by the pins this job derived itself.
+      - name: Verify the result
+        id: verify
+        if: env.FIX_READY == 'true'
+        # A failure here must still reach the comment below, so a person is asked.
+        continue-on-error: true
+        run: |
+          node --input-type=module <<'EOF'
+          import { readFileSync, readdirSync, lstatSync, existsSync } from 'node:fs';
+
+          const dir = `${process.env.RUNNER_TEMP}/result`;
+          const fail = (m) => { console.log(`::error::${m}`); process.exit(1); };
+          const unquote = (s) => s.replace(/^["']|["']$/g, '');
+
+          // 1. Only regular, reasonably small manifest files came back.
+          const allowed = new Set(['package.json', 'yarn.lock']);
+          const files = readdirSync(dir);
+          for (const f of files) {
+            if (!allowed.has(f)) fail(`Unexpected file in the result: ${f}`);
+            const st = lstatSync(`${dir}/${f}`);
+            if (!st.isFile() || st.size > 50 * 1024 * 1024) fail(`${f} is not a regular file of a sane size.`);
+          }
+          if (!files.includes('package.json') || !files.includes('yarn.lock')) fail('package.json or yarn.lock is missing from the result.');
+          if (!existsSync('yarn.lock')) fail('The pull request head has no yarn.lock.');
+
+          // 2. The plan is the one this job derived itself from the commit messages, never the artifact's.
+          const { field, pins } = JSON.parse(readFileSync(`${process.env.RUNNER_TEMP}/pins.json`, 'utf8'));
+          const matches = (key, name) => key === name || key.split('**/').pop() === name;
+
+          // 3. package.json must be byte for byte what the head plus the planned pins produce, written the
+          // same way the prepare job writes it (same indent, same trailing newline).
+          const headRaw = readFileSync('package.json', 'utf8');
+          const indent = /^( +|\t)"/m.exec(headRaw)?.[1] ?? '  ';
+          const expected = JSON.parse(headRaw);
+          expected[field] = { ...(expected[field] ?? {}) };
+          for (const [name, range] of Object.entries(pins)) {
+            for (const k of Object.keys(expected[field])) if (matches(k, name)) delete expected[field][k];
+            expected[field][name] = range;
+          }
+          const expectedRaw = JSON.stringify(expected, null, indent) + (headRaw.endsWith('\n') ? '\n' : '');
+          if (readFileSync(`${dir}/package.json`, 'utf8') !== expectedRaw) fail('package.json is not exactly the head plus the planned pins.');
+
+          // 4. yarn.lock. On a Dependabot head the lockfile already holds the bumped version; the only
+          // change a pin may make is one extra descriptor in the header of the pinned package's block.
+          // Everything else must be byte-identical to the head, so no tarball, integrity value or
+          // dependency can enter through this file. Anything the parser does not fully understand fails.
+          function parse(text, label) {
+            if (/\r(?!\n)/.test(text) || /\t/.test(text)) fail(`${label}: lone carriage return or tab.`);
+            const blocks = [];
+            for (const chunk of text.replace(/\r\n/g, '\n').split(/\n{2,}/)) {
+              const lines = chunk.split('\n').filter((l, i, all) => !(i === all.length - 1 && l === ''));
+              if (!lines.length) continue;
+              if (lines.every((l) => l.startsWith('#') || l === '')) continue; // the file's own comment header
+              const header = lines[0];
+              if (header.startsWith(' ') || header.startsWith('#') || !header.endsWith(':')) fail(`${label}: unexpected line "${header.slice(0, 60)}".`);
+              for (const l of lines.slice(1)) if (!l.startsWith('  ')) fail(`${label}: a line is not part of its block: "${l.slice(0, 60)}".`);
+              const descriptors = header.slice(0, -1).split(', ').map((d) => unquote(d.trim()));
+              const names = new Set(descriptors.map((d) => d.replace(/@[^@]*$/, '')));
+              if (names.size !== 1 || [...names][0] === '') fail(`${label}: a header names more than one package: ${header.slice(0, 80)}`);
+              blocks.push({ name: [...names][0], descriptors, body: lines.slice(1).join('\n'), text: lines.join('\n') });
+            }
+            return blocks;
+          }
+          const before = parse(readFileSync('yarn.lock', 'utf8'), 'head yarn.lock');
+          const after = parse(readFileSync(`${dir}/yarn.lock`, 'utf8'), 'new yarn.lock');
+          const pinned = new Set(Object.keys(pins));
+          const group = (blocks) => { const m = new Map(); for (const b of blocks) m.set(b.name, [...(m.get(b.name) ?? []), b]); return m; };
+          const was = group(before), now = group(after);
+
+          for (const name of new Set([...was.keys(), ...now.keys()])) {
+            if (pinned.has(name)) continue;
+            const x = (was.get(name) ?? []).map((b) => b.text).sort().join('\n\n');
+            const y = (now.get(name) ?? []).map((b) => b.text).sort().join('\n\n');
+            if (x !== y) fail(`yarn.lock changed for ${name}, which is not a planned pin.`);
+          }
+          const parts = (v) => { const m = /^(\d+)\.(\d+)\.(\d+)/.exec(v); return m ? [+m[1], +m[2], +m[3]] : null; };
+          for (const name of pinned) {
+            const old = was.get(name) ?? [], cur = now.get(name) ?? [];
+            if (!old.length || old.length !== cur.length) fail(`${name}: the set of lockfile blocks changed.`);
+            const pinDescriptor = `${name}@${pins[name]}`;
+            const floor = parts(pins[name].replace(/^\^/, ''));
+            let carriesPin = false;
+            for (const b of cur) {
+              const match = old.find((o) => o.body === b.body);
+              if (!match) fail(`${name}: a block body differs from the head.`);
+              const extra = b.descriptors.filter((d) => !match.descriptors.includes(d));
+              const lost = match.descriptors.filter((d) => !b.descriptors.includes(d));
+              if (lost.length || extra.some((d) => d !== pinDescriptor) || extra.length > 1) fail(`${name}: the header changed by more than the pin descriptor.`);
+              if (extra.length === 1) {
+                const version = parts(/^\s+version "([^"]+)"/m.exec(b.body)?.[1] ?? '');
+                // ^x.y.z: same major, and at least x.y.z.
+                const atLeast = version && (version[1] > floor[1] || (version[1] === floor[1] && version[2] >= floor[2]));
+                if (!version || version[0] !== floor[0] || !atLeast) {
+                  fail(`${name}: the block that carries the pin does not satisfy ${pins[name]}.`);
+                }
+                carriesPin = true;
+              }
+            }
+            if (!carriesPin && !cur.some((b) => b.descriptors.includes(pinDescriptor))) fail(`${name}: no block carries the pin.`);
+          }
+          console.log('Result verified.');
+          EOF
+
+      - name: Generate app token (push)
         id: app-token
-        if: steps.fix.outputs.ready == 'true'
-        uses: actions/create-github-app-token@v3
+        if: env.FIX_READY == 'true' && steps.verify.outcome == 'success'
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3
         with:
           app-id: ${{ inputs.app-id }}
           private-key: ${{ secrets.APP_PRIVATE_KEY }}
           owner: ${{ github.repository_owner }}
           repositories: ${{ github.event.repository.name }}
           permission-contents: write
+          permission-pull-requests: write
 
-      - name: Commit and push
+      # Nothing is pushed on this path, so the token can only comment and request a review.
+      - name: Generate app token (comment only)
+        id: comment-token
+        if: ${{ !cancelled() && steps.plan.outputs.missing == 'true' && steps.app-token.outcome != 'success' }}
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3
+        with:
+          app-id: ${{ inputs.app-id }}
+          private-key: ${{ secrets.APP_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+          repositories: ${{ github.event.repository.name }}
+          permission-pull-requests: write
+
+      - name: Push the pin
         id: push
-        if: steps.fix.outputs.ready == 'true'
+        if: steps.app-token.outcome == 'success'
         env:
           APP_TOKEN: ${{ steps.app-token.outputs.token }}
-          HEAD_REF: ${{ github.event.pull_request.head.ref }}
-          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
-          REPO: ${{ github.repository }}
         run: |
           set -euo pipefail
-          # Ignore any git configuration the install could have left behind, and keep the token off
-          # the command line.
           export GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1
+          install -m 0644 "$RUNNER_TEMP/result/package.json" package.json
+          install -m 0644 "$RUNNER_TEMP/result/yarn.lock" yarn.lock
           git -c core.hooksPath=/dev/null -c core.fsmonitor=false -c user.name='easylife-agents[bot]' \
             -c user.email='162133204+easylife-agents[bot]@users.noreply.github.com' \
             commit -a -m "Pin the indirect dependencies this bump fixes in package.json"
@@ -308,16 +620,32 @@ jobs:
           echo "::add-mask::$auth"
           GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=http.https://github.com/.extraheader GIT_CONFIG_VALUE_0="AUTHORIZATION: basic $auth" \
             git -c core.hooksPath=/dev/null -c core.fsmonitor=false push --no-verify "https://github.com/${REPO}.git" "HEAD:refs/heads/${HEAD_REF}"
-          echo "pushed=true" >> "$GITHUB_OUTPUT"
 
-      - name: Report
-        if: steps.check.outputs.missing == 'true'
+      - name: Ask for review and say what happened
+        if: ${{ !cancelled() && steps.plan.outputs.missing == 'true' && (steps.app-token.outputs.token != '' || steps.comment-token.outputs.token != '') }}
         env:
-          PUSHED: ${{ steps.push.outputs.pushed }}
+          GH_TOKEN: ${{ steps.app-token.outputs.token || steps.comment-token.outputs.token }}
+          PUSHED: ${{ steps.push.outcome == 'success' }}
+          MULTI_MAJOR: ${{ steps.plan.outputs.multimajor }}
         run: |
+          marker='<!-- pin-indirect -->'
           if [ "$PUSHED" = "true" ]; then
-            echo "Pins were pushed to the branch; the checks run again on the new head."
-            exit 0
+            printf '%s\nThe indirect bump was not pinned in package.json, so the pin was added and pushed. The checks run again on the new head.\n' "$marker" > "$RUNNER_TEMP/comment.md"
+          else
+            # A re-run must not repeat the comment; only the bot's own comment counts.
+            existing="$(gh api "repos/$REPO/issues/$PR_NUMBER/comments" --paginate --jq '.[] | select(.user.login == "easylife-agents[bot]") | .body')"
+            if [[ "$existing" == *"$marker"* ]]; then
+              echo "Already commented; not repeating."
+              exit 0
+            fi
+            node -e '
+              const fence = String.fromCharCode(96).repeat(3);
+              const { field, pins } = JSON.parse(require("fs").readFileSync(process.env.RUNNER_TEMP + "/pins.json", "utf8"));
+              process.stdout.write("<!-- pin-indirect -->\nThe indirect bump is not pinned in package.json and could not be fixed automatically (see the check summary). Add to package.json, then run the install:\n\n" + fence + "json\n" + JSON.stringify({ [field]: pins }, null, 2) + "\n" + fence + "\n" + (process.env.MULTI_MAJOR === "true" ? "\nThe lockfile holds more than one major of one of these packages: a name-only pin would move every dependent, so choose the pin by hand.\n" : ""));
+            ' > "$RUNNER_TEMP/comment.md"
           fi
-          echo "::error::Indirect bump is not pinned in package.json (see the job summary for the exact entries)."
-          exit 1
+          gh api "repos/$REPO/issues/$PR_NUMBER/comments" -F body=@"$RUNNER_TEMP/comment.md" > /dev/null
+          if [ -n "$REVIEWER" ]; then
+            gh api "repos/$REPO/pulls/$PR_NUMBER/requested_reviewers" --method POST -f "reviewers[]=$REVIEWER" > /dev/null \
+              || echo "::warning::Could not request $REVIEWER as reviewer."
+          fi
