@@ -54,6 +54,8 @@
 #         # cannot use; GitHub still requires the caller to pass it, and it then resolves from the
 #         # environment of the finish job. Without this line finish gets an empty key.
 #         APP_PRIVATE_KEY: ${{ secrets.APP_PRIVATE_KEY }}                # auto-fix only
+# A repository that leaves this line out gets a red check and nobody is asked: finish cannot mint a token
+# without the key, so it cannot comment or request a review either.
 name: Pin indirect Dependabot bumps
 
 on:
@@ -90,6 +92,7 @@ permissions:
   contents: read
 
 jobs:
+  # The pin job holds no app key and must never reference secrets.APP_PRIVATE_KEY; only finish does.
   pin:
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -589,11 +592,13 @@ jobs:
       # the reason, rather than twice inside the token action.
       - name: The key must be available
         id: key
+        # Runs after an earlier failure too (the comment path below depends on it), but only when a token will be needed.
+        if: ${{ !cancelled() && (env.FIX_READY == 'true' || steps.plan.outputs.missing == 'true') }}
         env:
           HAS_KEY: ${{ secrets.APP_PRIVATE_KEY != '' }}
         run: |
           if [ "$HAS_KEY" != "true" ]; then
-            echo "::error::APP_PRIVATE_KEY is empty in the finish job. It must be a secret of this repository's dependabot-pin environment, and the caller workflow must pass it with APP_PRIVATE_KEY set to its own secrets.APP_PRIVATE_KEY."
+            echo "::error::APP_PRIVATE_KEY is empty in the finish job. It must be a secret of this repository's dependabot-pin environment, and the caller workflow must pass it with APP_PRIVATE_KEY set to its own secrets.APP_PRIVATE_KEY. Never store it as a repository, organisation or Dependabot secret."
             exit 1
           fi
 
