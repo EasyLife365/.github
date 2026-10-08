@@ -628,8 +628,6 @@ jobs:
           PUSHED: ${{ steps.push.outcome == 'success' }}
           MULTI_MAJOR: ${{ steps.plan.outputs.multimajor }}
         run: |
-          # The node script below is deliberately single-quoted; its backticks are Markdown fences.
-          # shellcheck disable=SC2016
           marker='<!-- pin-indirect -->'
           if [ "$PUSHED" = "true" ]; then
             printf '%s\nThe indirect bump was not pinned in package.json, so the pin was added and pushed. The checks run again on the new head.\n' "$marker" > "$RUNNER_TEMP/comment.md"
@@ -641,8 +639,9 @@ jobs:
               exit 0
             fi
             node -e '
+              const fence = String.fromCharCode(96).repeat(3);
               const { field, pins } = JSON.parse(require("fs").readFileSync(process.env.RUNNER_TEMP + "/pins.json", "utf8"));
-              process.stdout.write("<!-- pin-indirect -->\nThe indirect bump is not pinned in package.json and could not be fixed automatically (see the check summary). Add to package.json, then run the install:\n\n```json\n" + JSON.stringify({ [field]: pins }, null, 2) + "\n```\n" + (process.env.MULTI_MAJOR === "true" ? "\nThe lockfile holds more than one major of one of these packages: a name-only pin would move every dependent, so choose the pin by hand.\n" : ""));
+              process.stdout.write("<!-- pin-indirect -->\nThe indirect bump is not pinned in package.json and could not be fixed automatically (see the check summary). Add to package.json, then run the install:\n\n" + fence + "json\n" + JSON.stringify({ [field]: pins }, null, 2) + "\n" + fence + "\n" + (process.env.MULTI_MAJOR === "true" ? "\nThe lockfile holds more than one major of one of these packages: a name-only pin would move every dependent, so choose the pin by hand.\n" : ""));
             ' > "$RUNNER_TEMP/comment.md"
           fi
           gh api "repos/$REPO/issues/$PR_NUMBER/comments" -F body=@"$RUNNER_TEMP/comment.md" > /dev/null
