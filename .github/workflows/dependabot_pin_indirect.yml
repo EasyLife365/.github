@@ -78,9 +78,6 @@ on:
       GITHUB_PACKAGE_TOKEN:
         description: Read-only packages token; only the auto-fix install needs it, to resolve @easylife365/*.
         required: false
-      APP_PRIVATE_KEY:
-        description: Callers pass nothing; the key is the secret of the dependabot-pin environment of the calling repository.
-        required: false
 
 permissions:
   contents: read
@@ -90,7 +87,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     concurrency:
-      group: pin-indirect-${{ github.event.pull_request.number || github.run_id }}
+      group: pin-indirect-${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
       cancel-in-progress: true
     outputs:
       missing: ${{ steps.check.outputs.missing }}
@@ -107,7 +104,7 @@ jobs:
         run: echo "Nothing to check - not a same-repository npm/yarn pull request opened by dependabot[bot]."
 
       # No credential is persisted: the install below must not be able to read a token from .git/config.
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         if: env.IS_DEPENDABOT == 'true'
         with:
           ref: ${{ github.event.pull_request.head.sha }}
@@ -253,7 +250,7 @@ jobs:
       - name: Set up Node
         if: steps.safe.outputs.safe == 'true'
         # No NODE_AUTH_TOKEN here: setup-node would export it to every later step.
-        uses: actions/setup-node@v7
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
         with:
           node-version: ${{ inputs.node-version }}
           registry-url: 'https://npm.pkg.github.com'
@@ -301,11 +298,13 @@ jobs:
 
       - name: Upload the result
         if: ${{ !cancelled() && steps.fix.outputs.ready == 'true' }}
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: pin-result
           path: ${{ runner.temp }}/result
           retention-days: 1
+          # "Re-run failed jobs" uploads again under the same name.
+          overwrite: true
 
       # Red until the pin is in the head: the push by finish starts a new run, which is green. If
       # finish fails the pull request stays red and cannot merge without the pin.
@@ -325,7 +324,7 @@ jobs:
     needs: pin
     # Also when pin failed: that is the case where a human needs to be asked. Not when it was
     # cancelled (a newer run replaces it).
-    if: ${{ !cancelled() && needs.pin.result != 'cancelled' && inputs.auto-fix && needs.pin.outputs.missing == 'true' }}
+    if: ${{ !cancelled() && needs.pin.result != 'cancelled' && inputs.auto-fix && needs.pin.outputs.missing == 'true' && github.event_name == 'pull_request_target' && github.event.pull_request.user.login == 'dependabot[bot]' && github.event.pull_request.head.repo.full_name == github.repository && startsWith(github.event.pull_request.head.ref, 'dependabot/npm_and_yarn/') && github.event.pull_request.base.ref == github.event.repository.default_branch }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
     concurrency:
@@ -346,7 +345,7 @@ jobs:
       HEAD_REF: ${{ github.event.pull_request.head.ref }}
       REPO: ${{ github.repository }}
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           ref: ${{ github.event.pull_request.head.sha }}
           fetch-depth: 0
@@ -470,7 +469,7 @@ jobs:
           echo "::error::A fix was claimed but the pins could not be derived here; not pushing."
           exit 1
 
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         if: env.FIX_READY == 'true'
         with:
           name: pin-result
@@ -478,11 +477,13 @@ jobs:
 
       # The uploaded files may differ from the head only by the pins this job derived itself.
       - name: Verify the result
+        id: verify
         if: env.FIX_READY == 'true'
+        # A failure here must still reach the comment below, so a person is asked.
+        continue-on-error: true
         run: |
           node --input-type=module <<'EOF'
           import { readFileSync, readdirSync, lstatSync, existsSync } from 'node:fs';
-          import { isDeepStrictEqual } from 'node:util';
 
           const dir = `${process.env.RUNNER_TEMP}/result`;
           const fail = (m) => { console.log(`::error::${m}`); process.exit(1); };
@@ -503,60 +504,84 @@ jobs:
           const { field, pins } = JSON.parse(readFileSync(`${process.env.RUNNER_TEMP}/pins.json`, 'utf8'));
           const matches = (key, name) => key === name || key.split('**/').pop() === name;
 
-          // 3. package.json must be exactly the head plus the planned pins, nothing else.
-          const head = JSON.parse(readFileSync('package.json', 'utf8'));
-          const next = JSON.parse(readFileSync(`${dir}/package.json`, 'utf8'));
-          const expected = structuredClone(head);
+          // 3. package.json must be byte for byte what the head plus the planned pins produce, written the
+          // same way the prepare job writes it (same indent, same trailing newline).
+          const headRaw = readFileSync('package.json', 'utf8');
+          const indent = /^( +|\t)"/m.exec(headRaw)?.[1] ?? '  ';
+          const expected = JSON.parse(headRaw);
           expected[field] = { ...(expected[field] ?? {}) };
           for (const [name, range] of Object.entries(pins)) {
             for (const k of Object.keys(expected[field])) if (matches(k, name)) delete expected[field][k];
             expected[field][name] = range;
           }
-          if (!isDeepStrictEqual(expected, next)) fail('package.json is not the head plus exactly the planned pins.');
+          const expectedRaw = JSON.stringify(expected, null, indent) + (headRaw.endsWith('\n') ? '\n' : '');
+          if (readFileSync(`${dir}/package.json`, 'utf8') !== expectedRaw) fail('package.json is not exactly the head plus the planned pins.');
 
-          // 4. yarn.lock: only the blocks of the pinned packages may differ from the head, and those must
-          // be registry tarballs with an integrity hash whose URL names the package and version.
-          const hosts = /^https:\/\/(registry\.yarnpkg\.com|registry\.npmjs\.org|npm\.pkg\.github\.com)\//;
-          function parse(text) {
-            const byName = new Map();
-            for (const block of text.replace(/\r\n/g, '\n').split(/\n\n+/)) {
-              const lines = block.split('\n').filter((l) => l && !l.startsWith('#'));
+          // 4. yarn.lock. On a Dependabot head the lockfile already holds the bumped version; the only
+          // change a pin may make is one extra descriptor in the header of the pinned package's block.
+          // Everything else must be byte-identical to the head, so no tarball, integrity value or
+          // dependency can enter through this file. Anything the parser does not fully understand fails.
+          function parse(text, label) {
+            if (/\r(?!\n)/.test(text) || /\t/.test(text)) fail(`${label}: lone carriage return or tab.`);
+            const blocks = [];
+            for (const chunk of text.replace(/\r\n/g, '\n').split(/\n{2,}/)) {
+              const lines = chunk.split('\n').filter((l, i, all) => !(i === all.length - 1 && l === ''));
               if (!lines.length) continue;
+              if (lines.every((l) => l.startsWith('#') || l === '')) continue; // the file's own comment header
               const header = lines[0];
-              if (header.startsWith(' ') || !header.endsWith(':')) continue;
-              const name = unquote(header.slice(0, -1).split(',')[0].trim()).replace(/@[^@]*$/, '');
-              byName.set(name, [...(byName.get(name) ?? []), lines.join('\n')]);
+              if (header.startsWith(' ') || header.startsWith('#') || !header.endsWith(':')) fail(`${label}: unexpected line "${header.slice(0, 60)}".`);
+              for (const l of lines.slice(1)) if (!l.startsWith('  ')) fail(`${label}: a line is not part of its block: "${l.slice(0, 60)}".`);
+              const descriptors = header.slice(0, -1).split(', ').map((d) => unquote(d.trim()));
+              const names = new Set(descriptors.map((d) => d.replace(/@[^@]*$/, '')));
+              if (names.size !== 1 || [...names][0] === '') fail(`${label}: a header names more than one package: ${header.slice(0, 80)}`);
+              blocks.push({ name: [...names][0], descriptors, body: lines.slice(1).join('\n'), text: lines.join('\n') });
             }
-            return byName;
+            return blocks;
           }
-          const before = parse(readFileSync('yarn.lock', 'utf8'));
-          const after = parse(readFileSync(`${dir}/yarn.lock`, 'utf8'));
+          const before = parse(readFileSync('yarn.lock', 'utf8'), 'head yarn.lock');
+          const after = parse(readFileSync(`${dir}/yarn.lock`, 'utf8'), 'new yarn.lock');
           const pinned = new Set(Object.keys(pins));
-          for (const name of new Set([...before.keys(), ...after.keys()])) {
+          const group = (blocks) => { const m = new Map(); for (const b of blocks) m.set(b.name, [...(m.get(b.name) ?? []), b]); return m; };
+          const was = group(before), now = group(after);
+
+          for (const name of new Set([...was.keys(), ...now.keys()])) {
             if (pinned.has(name)) continue;
-            const x = [...(before.get(name) ?? [])].sort().join('\n\n');
-            const y = [...(after.get(name) ?? [])].sort().join('\n\n');
+            const x = (was.get(name) ?? []).map((b) => b.text).sort().join('\n\n');
+            const y = (now.get(name) ?? []).map((b) => b.text).sort().join('\n\n');
             if (x !== y) fail(`yarn.lock changed for ${name}, which is not a planned pin.`);
           }
+          const parts = (v) => { const m = /^(\d+)\.(\d+)\.(\d+)/.exec(v); return m ? [+m[1], +m[2], +m[3]] : null; };
           for (const name of pinned) {
-            const blocks = after.get(name) ?? [];
-            if (!blocks.length) fail(`${name} has no block in the new yarn.lock.`);
-            for (const block of blocks) {
-              const version = /^\s+version "([^"]+)"/m.exec(block)?.[1];
-              const resolved = /^\s+resolved "([^"]+)"/m.exec(block)?.[1];
-              if (!version || !resolved || !/^\s+integrity sha512-/m.test(block)) fail(`${name}: a block lacks version, resolved or integrity.`);
-              const base = name.split('/').pop();
-              if (!hosts.test(resolved) || !resolved.split('#')[0].endsWith(`/${name}/-/${base}-${version}.tgz`)) {
-                fail(`${name}: unexpected resolved URL.`);
+            const old = was.get(name) ?? [], cur = now.get(name) ?? [];
+            if (!old.length || old.length !== cur.length) fail(`${name}: the set of lockfile blocks changed.`);
+            const pinDescriptor = `${name}@${pins[name]}`;
+            const floor = parts(pins[name].replace(/^\^/, ''));
+            let carriesPin = false;
+            for (const b of cur) {
+              const match = old.find((o) => o.body === b.body);
+              if (!match) fail(`${name}: a block body differs from the head.`);
+              const extra = b.descriptors.filter((d) => !match.descriptors.includes(d));
+              const lost = match.descriptors.filter((d) => !b.descriptors.includes(d));
+              if (lost.length || extra.some((d) => d !== pinDescriptor) || extra.length > 1) fail(`${name}: the header changed by more than the pin descriptor.`);
+              if (extra.length === 1) {
+                const version = parts(/^\s+version "([^"]+)"/m.exec(b.body)?.[1] ?? '');
+                // ^x.y.z: same major, and at least x.y.z.
+                const atLeast = version && (version[1] > floor[1] || (version[1] === floor[1] && version[2] >= floor[2]));
+                if (!version || version[0] !== floor[0] || !atLeast) {
+                  fail(`${name}: the block that carries the pin does not satisfy ${pins[name]}.`);
+                }
+                carriesPin = true;
               }
             }
+            if (!carriesPin && !cur.some((b) => b.descriptors.includes(pinDescriptor))) fail(`${name}: no block carries the pin.`);
           }
           console.log('Result verified.');
           EOF
 
-      - name: Generate app token
+      - name: Generate app token (push)
         id: app-token
-        uses: actions/create-github-app-token@v3
+        if: env.FIX_READY == 'true' && steps.verify.outcome == 'success'
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3
         with:
           app-id: ${{ inputs.app-id }}
           private-key: ${{ secrets.APP_PRIVATE_KEY }}
@@ -565,9 +590,21 @@ jobs:
           permission-contents: write
           permission-pull-requests: write
 
+      # Nothing is pushed on this path, so the token can only comment and request a review.
+      - name: Generate app token (comment only)
+        id: comment-token
+        if: ${{ !cancelled() && steps.plan.outputs.missing == 'true' && steps.app-token.outcome != 'success' }}
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3
+        with:
+          app-id: ${{ inputs.app-id }}
+          private-key: ${{ secrets.APP_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+          repositories: ${{ github.event.repository.name }}
+          permission-pull-requests: write
+
       - name: Push the pin
         id: push
-        if: env.FIX_READY == 'true'
+        if: steps.app-token.outcome == 'success'
         env:
           APP_TOKEN: ${{ steps.app-token.outputs.token }}
         run: |
@@ -585,23 +622,25 @@ jobs:
             git -c core.hooksPath=/dev/null -c core.fsmonitor=false push --no-verify "https://github.com/${REPO}.git" "HEAD:refs/heads/${HEAD_REF}"
 
       - name: Ask for review and say what happened
-        if: ${{ !cancelled() && steps.app-token.outputs.token != '' && steps.plan.outputs.missing == 'true' }}
+        if: ${{ !cancelled() && steps.plan.outputs.missing == 'true' && (steps.app-token.outputs.token != '' || steps.comment-token.outputs.token != '') }}
         env:
-          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          GH_TOKEN: ${{ steps.app-token.outputs.token || steps.comment-token.outputs.token }}
           PUSHED: ${{ steps.push.outcome == 'success' }}
+          MULTI_MAJOR: ${{ steps.plan.outputs.multimajor }}
         run: |
           marker='<!-- pin-indirect -->'
           if [ "$PUSHED" = "true" ]; then
             printf '%s\nThe indirect bump was not pinned in package.json, so the pin was added and pushed. The checks run again on the new head.\n' "$marker" > "$RUNNER_TEMP/comment.md"
           else
-            # A re-run must not repeat the comment.
-            if gh api "repos/$REPO/issues/$PR_NUMBER/comments" --paginate --jq '.[].body' | grep -qF "$marker"; then
+            # A re-run must not repeat the comment; only the bot's own comment counts.
+            existing="$(gh api "repos/$REPO/issues/$PR_NUMBER/comments" --paginate --jq '.[] | select(.user.login == "easylife-agents[bot]") | .body')"
+            if [[ "$existing" == *"$marker"* ]]; then
               echo "Already commented; not repeating."
               exit 0
             fi
             node -e '
               const { field, pins } = JSON.parse(require("fs").readFileSync(process.env.RUNNER_TEMP + "/pins.json", "utf8"));
-              process.stdout.write("<!-- pin-indirect -->\nThe indirect bump is not pinned in package.json and could not be fixed automatically (see the check summary). Add to package.json, then run the install:\n\n```json\n" + JSON.stringify({ [field]: pins }, null, 2) + "\n```\n");
+              process.stdout.write("<!-- pin-indirect -->\nThe indirect bump is not pinned in package.json and could not be fixed automatically (see the check summary). Add to package.json, then run the install:\n\n```json\n" + JSON.stringify({ [field]: pins }, null, 2) + "\n```\n" + (process.env.MULTI_MAJOR === "true" ? "\nThe lockfile holds more than one major of one of these packages: a name-only pin would move every dependent, so choose the pin by hand.\n" : ""));
             ' > "$RUNNER_TEMP/comment.md"
           fi
           gh api "repos/$REPO/issues/$PR_NUMBER/comments" -F body=@"$RUNNER_TEMP/comment.md" > /dev/null
