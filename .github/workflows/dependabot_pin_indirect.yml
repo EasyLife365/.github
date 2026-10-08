@@ -628,6 +628,8 @@ jobs:
           PUSHED: ${{ steps.push.outcome == 'success' }}
           MULTI_MAJOR: ${{ steps.plan.outputs.multimajor }}
         run: |
+          # The node script below is deliberately single-quoted; its backticks are Markdown fences.
+          # shellcheck disable=SC2016
           marker='<!-- pin-indirect -->'
           if [ "$PUSHED" = "true" ]; then
             printf '%s\nThe indirect bump was not pinned in package.json, so the pin was added and pushed. The checks run again on the new head.\n' "$marker" > "$RUNNER_TEMP/comment.md"
