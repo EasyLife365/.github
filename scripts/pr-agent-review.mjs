@@ -64,6 +64,7 @@
 const PR_NUMBER_IN_REF = /\/pr-(\d+)-[0-9a-f]+$/;
 
 import { appendFileSync } from 'node:fs';
+import { isDependencyOnlyChange, commitsAreTrusted, COMMITS_CAP } from './lib/dependency-only.mjs';
 
 const env = process.env;
 
@@ -123,9 +124,9 @@ async function api(path) {
  * one page the newest review is on the LAST page. Reading only the first would report "no review"
  * on exactly the busy pull requests where one is most likely to exist.
  */
-async function apiAll(path) {
+async function apiAll(path, maxPages = 10) {
   const items = [];
-  for (let page = 1; page <= 10; page++) {
+  for (let page = 1; page <= maxPages; page++) {
     const batch = await api(`${path}?per_page=100&page=${page}`);
     items.push(...batch);
     if (batch.length < 100) break;
@@ -229,10 +230,51 @@ if (pull.draft) {
 
 // Bump and dependency pull requests are exempt by design -- CI proves them, and a review of a
 // version-number diff is spend with nothing to find.
+//
+// The exemption is by author AND by content AND by provenance (EasyLife365/.github#146). The author
+// never changes when someone with write access pushes more commits to a dependabot/* branch, so on
+// its own it would let a human ship arbitrary code under a bot's name with no review. So ALL of these
+// must hold, or the normal review runs:
+//   1. the files are only dependency manifests/lockfiles and paired `uses:` ref bumps in workflows;
+//   2. the first commit is a bot commit committed by GitHub itself (web-flow, valid signature, bot
+//      author), every commit is such a commit or the pin workflow app's commit touching only
+//      package.json / yarn.lock / package-lock.json, and the last commit is the head. Route (a)
+//      therefore TRUSTS GITHUB'S web-flow SIGNATURE: author alone is just an email anyone can set;
+//      (RESIDUAL for the app commits: that identity is matched by name and email and is unsigned, so it is forgeable by
+//      anyone who can push; the manifest-only file rule bounds it, and the follow-up is a signed commit);
+//   3. the head did not move while this was being checked.
+// Anything unreadable, truncated or failing falls through to review -- fail closed.
+//
+// WHAT REMAINS TRUSTED once the above holds: package.json scripts, lockfile resolved URLs and the
+// contents of .csproj / .props / global.json are trusted IN FULL. This check judges which files
+// changed and who committed them, not what a bot-authored manifest change does at install or build.
+// See scripts/lib/dependency-only.mjs.
 if (cfg.exemptAuthors.includes(author)) {
-  await postStatus(statusSha, 'success', `Exempt author (${author})`);
-  console.log(`Author ${author} is exempt from agent review.`);
-  process.exit(0);
+  let verdict;
+  try {
+    // The files API lists at most 3000 files, 100 per page; the commits API at most 250.
+    const files = await apiAll(`/repos/${owner}/${repo}/pulls/${cfg.prNumber}/files`, 30);
+    const commits = await apiAll(`/repos/${owner}/${repo}/pulls/${cfg.prNumber}/commits`, Math.ceil(COMMITS_CAP / 100));
+    verdict = isDependencyOnlyChange(files);
+    if (verdict.dependencyOnly && !commitsAreTrusted(commits, files, cfg.exemptAuthors, headSha)) {
+      verdict = { dependencyOnly: false, offending: '(a commit that is not a verified bot commit)' };
+    }
+    if (verdict.dependencyOnly) {
+      // Guard against a push between the reads above and the status below.
+      const again = await api(`/repos/${owner}/${repo}/pulls/${cfg.prNumber}`);
+      if (again.head.sha !== headSha) {
+        verdict = { dependencyOnly: false, offending: '(the head moved while checking)' };
+      }
+    }
+  } catch (error) {
+    verdict = { dependencyOnly: false, offending: `(lookup failed: ${error.message})` };
+  }
+  if (verdict.dependencyOnly) {
+    await postStatus(statusSha, 'success', `Exempt author (${author}): dependency files only`);
+    console.log(`Author ${author} is exempt from agent review: the pull request changes dependency files only.`);
+    process.exit(0);
+  }
+  console.log(`Author ${author} is exempt-listed but the pull request changes ${verdict.offending}; reviewing normally.`);
 }
 
 // WHO IS ALLOWED TO SATISFY THIS CHECK
