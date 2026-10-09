@@ -238,6 +238,8 @@ if (pull.draft) {
 //   1. the files are only dependency manifests/lockfiles and paired `uses:` ref bumps in workflows;
 //   2. every commit is a GitHub-verified commit by an exempt bot, or the pin workflow app's commit
 //      touching only package.json / yarn.lock / package-lock.json;
+//      (RESIDUAL: that app identity is matched by name and email and is unsigned, so it is forgeable by
+//      anyone who can push; the manifest-only file rule bounds it, and the follow-up is a signed commit);
 //   3. the head did not move while this was being checked.
 // Anything unreadable, truncated or failing falls through to review -- fail closed.
 //

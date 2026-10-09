@@ -22,7 +22,18 @@ const DEPENDENCY_FILE_SUFFIXES = ['.csproj', '.props'];
 
 /** The only files the pin workflow (dependabot_pin_indirect.yml) commits. */
 const PIN_FILE_NAMES = new Set(['package.json', 'yarn.lock', 'package-lock.json']);
-const PIN_APP_LOGIN = 'easylife-agents[bot]';
+
+// The pin workflow's commit identity, as the commits API reports it (commit.author / commit.committer).
+// The top-level `author` of such a commit is null (the noreply email is not linked to an account), so
+// the identity is matched on name and email, never on author.login.
+//
+// This identity is NOT signed (verification: unsigned), so anyone who can push a commit with this name
+// and email can forge it. The damage is bounded by the manifest-only file rule and is accepted so that
+// the pin workflow's auto-fix pull requests stay exempt. The proper follow-up (EasyLife365/.github#146)
+// is to have the pin workflow create its commit through the Git Data API so GitHub signs it, and then
+// to require `verified` here as well.
+export const APP_NAME = 'easylife-agents[bot]';
+export const APP_EMAIL = '162133204+easylife-agents[bot]@users.noreply.github.com';
 
 /**
  * One side of a Dependabot github-actions bump: `uses: owner/repo[/path]@ref`, optionally a list
@@ -113,12 +124,13 @@ export function isDependencyOnlyChange(files) {
 
 /**
  * Provenance: every commit must be either
- *  (a) authored by an exempt-listed bot AND GitHub-verified (Dependabot and Renovate commits are
- *      signed by GitHub), or
- *  (b) authored by the pin workflow's app (unsigned, so it cannot require `verified`) while the
- *      pull request's files are only package.json / yarn.lock / package-lock.json.
- * A human commit, an unverified bot commit or an "Update branch" merge commit by a person all fail.
- * @param {Array<{author?: {login?: string}|null, commit?: {verification?: {verified?: boolean}}}>} commits
+ *  (a) authored by an exempt-listed bot (author.login, lowercased) AND GitHub-verified (Dependabot
+ *      and Renovate commits are signed by GitHub), or
+ *  (b) the pin workflow app's commit (APP_NAME / APP_EMAIL as author AND committer, unsigned) while
+ *      the pull request's files are only package.json / yarn.lock / package-lock.json.
+ * A human commit, an unverified bot commit or an "Update branch" merge commit by a person all fail,
+ * as does any commit with a missing author, committer or commit object.
+ * @param {Array<object>} commits as returned by GET /pulls/{n}/commits
  * @param {Array<{filename: string, status?: string}>} files
  * @param {string[]} exemptAuthors lowercase logins
  */
@@ -129,11 +141,12 @@ export function commitsAreTrusted(commits, files, exemptAuthors) {
     Array.isArray(files) &&
     files.length > 0 &&
     files.every((f) => f.status !== 'removed' && f.status !== 'renamed' && PIN_FILE_NAMES.has(baseName(f.filename)));
+  const isAppIdentity = (who) => who?.name === APP_NAME && who?.email === APP_EMAIL;
   return commits.every((c) => {
+    if (!c || typeof c !== 'object' || !c.commit) return false;
     const login = (c.author?.login || '').toLowerCase();
-    if (!login) return false;
-    if (exemptAuthors.includes(login)) return c.commit?.verification?.verified === true;
-    if (login === PIN_APP_LOGIN) return pinFilesOnly;
+    if (login && exemptAuthors.includes(login)) return c.commit.verification?.verified === true;
+    if (isAppIdentity(c.commit.author) && isAppIdentity(c.commit.committer)) return pinFilesOnly;
     return false;
   });
 }

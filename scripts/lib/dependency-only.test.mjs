@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { isDependencyOnlyChange, commitsAreTrusted, FILES_API_CAP, COMMITS_CAP } from './dependency-only.mjs';
+import { isDependencyOnlyChange, commitsAreTrusted, FILES_API_CAP, COMMITS_CAP, APP_NAME, APP_EMAIL } from './dependency-only.mjs';
 
 const f = (filename, extra = {}) => ({ filename, status: 'modified', ...extra });
 const wf = (patch, extra = {}) => f('.github/workflows/ci.yml', { patch, ...extra });
@@ -116,38 +116,85 @@ test('context-only patch, missing patch, status removed/added workflow rejected'
   assert.equal(exempt([wf(bump('a/b@v1', 'a/b@v2'), { status: 'added' })]), false);
 });
 
-// ---- commitsAreTrusted ----
+// ---- commitsAreTrusted (fixtures mirror the live GET /pulls/{n}/commits shapes) ----
 const EX = ['dependabot[bot]', 'renovate[bot]'];
-const c = (login, verified) => ({ author: login === null ? null : { login }, commit: { verification: { verified } } });
+const dependabotCommit = (over = {}) => ({
+  author: { login: 'dependabot[bot]' },
+  committer: { login: 'web-flow' },
+  commit: {
+    author: { name: 'dependabot[bot]', email: '49699333+dependabot[bot]@users.noreply.github.com' },
+    committer: { name: 'GitHub', email: 'noreply@github.com' },
+    verification: { verified: true, reason: 'valid' },
+  },
+  ...over,
+});
+const pinAppCommit = (who = {}) => ({
+  author: null,
+  committer: null,
+  commit: {
+    author: { name: APP_NAME, email: APP_EMAIL, ...who.author },
+    committer: { name: APP_NAME, email: APP_EMAIL, ...who.committer },
+    verification: { verified: false, reason: 'unsigned' },
+  },
+});
+const humanCommit = (login = 'alice') => ({
+  author: { login },
+  committer: { login: 'web-flow' },
+  commit: { author: { name: login, email: login + '@example.com' }, committer: { name: 'GitHub', email: 'noreply@github.com' }, verification: { verified: true, reason: 'valid' } },
+});
 const manifests = [f('package.json'), f('yarn.lock'), f('sub/package-lock.json')];
+const trusted = (commits, files = manifests) => commitsAreTrusted(commits, files, EX);
 
-test('verified bot commits are trusted', () => {
-  assert.equal(commitsAreTrusted([c('dependabot[bot]', true), c('renovate[bot]', true)], [f('src/a.ts')], EX), true);
+test('verified Dependabot commit is trusted whatever files it touches', () => {
+  assert.equal(trusted([dependabotCommit()], [f('src/a.ts')]), true);
 });
 
-test('unverified Dependabot commit is not trusted', () => {
-  assert.equal(commitsAreTrusted([c('dependabot[bot]', false)], manifests, EX), false);
-  assert.equal(commitsAreTrusted([{ author: { login: 'dependabot[bot]' } }], manifests, EX), false);
+test('Dependabot commit with verified false or missing verification is not trusted', () => {
+  const unverified = dependabotCommit();
+  unverified.commit.verification = { verified: false, reason: 'unsigned' };
+  assert.equal(trusted([unverified]), false);
+  const missing = dependabotCommit();
+  delete missing.commit.verification;
+  assert.equal(trusted([missing]), false);
 });
 
-test('human commit, human merge commit and author-less commit are not trusted', () => {
-  assert.equal(commitsAreTrusted([c('dependabot[bot]', true), c('alice', true)], manifests, EX), false);
-  assert.equal(commitsAreTrusted([c('dependabot[bot]', true), c('bob', true)], manifests, EX), false);
-  assert.equal(commitsAreTrusted([c(null, true)], manifests, EX), false);
+test('login case variants are matched case-insensitively', () => {
+  assert.equal(trusted([dependabotCommit({ author: { login: 'Dependabot[bot]' } })]), true);
+  assert.equal(trusted([dependabotCommit({ author: { login: 'RENOVATE[BOT]' } })]), true);
 });
 
-test('pin app commit with manifest-only files is trusted even unsigned', () => {
-  assert.equal(commitsAreTrusted([c('dependabot[bot]', true), c('easylife-agents[bot]', false)], manifests, EX), true);
+test('pin app commit with null author login is trusted when files are manifest-only', () => {
+  assert.equal(trusted([dependabotCommit(), pinAppCommit()]), true);
 });
 
-test('pin app commit touching a .mjs or a removed manifest is not trusted', () => {
-  assert.equal(commitsAreTrusted([c('easylife-agents[bot]', false)], [f('package.json'), f('x.mjs')], EX), false);
-  assert.equal(commitsAreTrusted([c('easylife-agents[bot]', false)], [f('package.json', { status: 'removed' })], EX), false);
+test('pin app identity with a differing author or committer email or name is not trusted', () => {
+  assert.equal(trusted([pinAppCommit({ author: { email: 'evil@example.com' } })]), false);
+  assert.equal(trusted([pinAppCommit({ committer: { email: 'evil@example.com' } })]), false);
+  assert.equal(trusted([pinAppCommit({ committer: { name: 'someone' } })]), false);
+  assert.equal(trusted([pinAppCommit({ author: { name: 'someone' } })]), false);
+});
+
+test('pin app identity with a .mjs or removed or renamed manifest in the files is not trusted', () => {
+  assert.equal(trusted([pinAppCommit()], [f('package.json'), f('x.mjs')]), false);
+  assert.equal(trusted([pinAppCommit()], [f('package.json', { status: 'removed' })]), false);
+  assert.equal(trusted([pinAppCommit()], [f('package.json', { status: 'renamed' })]), false);
+});
+
+test('human commit and human merge commit are not trusted', () => {
+  assert.equal(trusted([dependabotCommit(), humanCommit('alice')]), false);
+  assert.equal(trusted([dependabotCommit(), humanCommit('bob')]), false);
+});
+
+test('missing or null commit, author or committer data is not trusted', () => {
+  assert.equal(trusted([null]), false);
+  assert.equal(trusted([{ author: { login: 'dependabot[bot]' } }]), false);
+  assert.equal(trusted([{ author: null, commit: {} }]), false);
+  assert.equal(trusted([{ author: null, commit: { author: { name: APP_NAME, email: APP_EMAIL } } }]), false);
 });
 
 test('empty, non-array and 250 commits are not trusted', () => {
-  assert.equal(commitsAreTrusted([], manifests, EX), false);
-  assert.equal(commitsAreTrusted(null, manifests, EX), false);
-  assert.equal(commitsAreTrusted(Array.from({ length: COMMITS_CAP }, () => c('dependabot[bot]', true)), manifests, EX), false);
-  assert.equal(commitsAreTrusted(Array.from({ length: COMMITS_CAP - 1 }, () => c('dependabot[bot]', true)), manifests, EX), true);
+  assert.equal(trusted([]), false);
+  assert.equal(trusted(null), false);
+  assert.equal(trusted(Array.from({ length: COMMITS_CAP }, () => dependabotCommit())), false);
+  assert.equal(trusted(Array.from({ length: COMMITS_CAP - 1 }, () => dependabotCommit())), true);
 });
