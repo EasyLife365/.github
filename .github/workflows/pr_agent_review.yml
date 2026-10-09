@@ -115,7 +115,7 @@ on:
         type: string
         default: 'agent-review'
       exempt-authors:
-        description: 'Comma-separated authors exempt from agent review, but only while the pull request changes nothing except dependency manifests, lockfiles and paired workflow uses: ref bumps, and every commit is a GitHub-verified commit by an exempt bot (or the pin workflow app touching only package.json/yarn.lock/package-lock.json). Commits of the pin app are matched by their unsigned name and email, which is forgeable by anyone who can push but bounded by the manifest-only rule. Anything else is reviewed normally. Once that holds, package.json scripts, lockfile resolved URLs and .csproj/.props/global.json contents are trusted in full.'
+        description: 'Comma-separated authors exempt from agent review, but only while the pull request changes nothing except dependency manifests, lockfiles and paired workflow uses: ref bumps, and every commit is a bot commit committed and signed by GitHub itself (web-flow, so GitHub signature is trusted), or the pin workflow app touching only package.json/yarn.lock/package-lock.json after such a first commit. Commits of the pin app are matched by their unsigned name and email, which is forgeable by anyone who can push but bounded by the manifest-only rule. Anything else is reviewed normally. Once that holds, package.json scripts, lockfile resolved URLs and .csproj/.props/global.json contents are trusted in full.'
         required: false
         type: string
         default: 'dependabot[bot],renovate[bot]'

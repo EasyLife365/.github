@@ -143,7 +143,7 @@ const humanCommit = (login = 'alice') => ({
   commit: { author: { name: login, email: login + '@example.com' }, committer: { name: 'GitHub', email: 'noreply@github.com' }, verification: { verified: true, reason: 'valid' } },
 });
 const manifests = [f('package.json'), f('yarn.lock'), f('sub/package-lock.json')];
-const trusted = (commits, files = manifests) => commitsAreTrusted(commits, files, EX);
+const trusted = (commits, files = manifests, headSha) => commitsAreTrusted(commits, files, EX, headSha);
 
 test('verified Dependabot commit is trusted whatever files it touches', () => {
   assert.equal(trusted([dependabotCommit()], [f('src/a.ts')]), true);
@@ -197,4 +197,71 @@ test('empty, non-array and 250 commits are not trusted', () => {
   assert.equal(trusted(null), false);
   assert.equal(trusted(Array.from({ length: COMMITS_CAP }, () => dependabotCommit())), false);
   assert.equal(trusted(Array.from({ length: COMMITS_CAP - 1 }, () => dependabotCommit())), true);
+});
+
+test('Dependabot author with a human committer and a valid signature is NOT trusted (forged author)', () => {
+  const forged = dependabotCommit({ committer: { login: 'alice' } });
+  forged.commit.committer = { name: 'Alice', email: 'alice@example.com' };
+  assert.equal(trusted([forged]), false);
+  const humanEmailOnly = dependabotCommit();
+  humanEmailOnly.commit.committer = { name: 'Alice', email: 'alice@example.com' };
+  assert.equal(trusted([humanEmailOnly]), false);
+  const loginOnly = dependabotCommit({ committer: { login: 'alice' } });
+  assert.equal(trusted([loginOnly]), false);
+});
+
+test('signature reason other than valid is not trusted', () => {
+  const c = dependabotCommit();
+  c.commit.verification = { verified: true, reason: 'expired_key' };
+  assert.equal(trusted([c]), false);
+});
+
+test('Update branch merge commit (committer web-flow, author the human) is not trusted', () => {
+  const merge = humanCommit('alice');
+  merge.committer = { login: 'web-flow' };
+  assert.equal(trusted([dependabotCommit(), merge]), false);
+});
+
+test('pin app commits alone are not trusted; order matters', () => {
+  assert.equal(trusted([pinAppCommit()]), false);
+  assert.equal(trusted([pinAppCommit(), pinAppCommit()]), false);
+  assert.equal(trusted([dependabotCommit(), pinAppCommit()]), true);
+  assert.equal(trusted([pinAppCommit(), dependabotCommit()]), false);
+});
+
+test('headSha must equal the last commit sha when given', () => {
+  const a = { ...dependabotCommit(), sha: 'aaa' };
+  const b = { ...pinAppCommit(), sha: 'bbb' };
+  assert.equal(trusted([a, b], manifests, 'bbb'), true);
+  assert.equal(trusted([a, b], manifests, 'aaa'), false);
+  assert.equal(trusted([a, b], manifests, 'ccc'), false);
+});
+
+// ---- uses: line hardening ----
+test('comment tail: spaced harmless comment accepted, glued or metacharacter comments rejected', () => {
+  assert.equal(exempt([wf(bump('a/b@v1', 'a/b@v2 # v2.1.0'))]), true);
+  assert.equal(exempt([wf(bump('a/b@v1', 'a/b@v2#$(curl)'))]), false);
+  assert.equal(exempt([wf(bump('a/b@v1', 'a/b@v2 # $(x)'))]), false);
+  assert.equal(exempt([wf(bump('a/b@v1', 'a/b@v2 # `x`'))]), false);
+  assert.equal(exempt([wf(bump('a/b@v1', 'a/b@v2 #`x`'))]), false);
+});
+
+test('quotes must balance and match', () => {
+  assert.equal(exempt([wf(bump('"a/b@v1"', '"a/b@v2"'))]), true);
+  assert.equal(exempt([wf(bump("'a/b@v1'", "'a/b@v2'"))]), true);
+  assert.equal(exempt([wf(bump('"a/b@v1', '"a/b@v2'))]), false);
+  assert.equal(exempt([wf(bump('"a/b@v1"', '"a/b@v2\''))]), false);
+  assert.equal(exempt([wf(bump('a/b@v1', 'a/b@v2"'))]), false);
+});
+
+test('pairs must be adjacent within a hunk', () => {
+  const moved = '@@ -1,3 +1,2 @@\n ctx\n-      - uses: a/b@v1\n ctx\n@@ -20,2 +19,3 @@\n ctx\n+      - uses: a/b@v2\n ctx';
+  assert.equal(exempt([wf(moved)]), false);
+  const split = '@@ -1,4 +1,4 @@\n-      - uses: a/b@v1\n ctx\n+      - uses: a/b@v2\n ctx';
+  assert.equal(exempt([wf(split)]), false);
+  assert.equal(exempt([wf(bump('a/b@v1', 'a/b@v2'))]), true);
+  const two = '@@ -1,4 +1,4 @@\n-      - uses: a/b@v1\n-      - uses: c/d@v1\n+      - uses: a/b@v2\n+      - uses: c/d@v2\n ctx';
+  assert.equal(exempt([wf(two)]), true);
+  const twoRuns = '@@ -1,5 +1,5 @@\n-      - uses: a/b@v1\n+      - uses: a/b@v2\n ctx\n-      - uses: c/d@v1\n+      - uses: c/d@v2';
+  assert.equal(exempt([wf(twoRuns)]), true);
 });

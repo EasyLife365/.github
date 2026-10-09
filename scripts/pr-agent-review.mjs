@@ -236,9 +236,11 @@ if (pull.draft) {
 // its own it would let a human ship arbitrary code under a bot's name with no review. So ALL of these
 // must hold, or the normal review runs:
 //   1. the files are only dependency manifests/lockfiles and paired `uses:` ref bumps in workflows;
-//   2. every commit is a GitHub-verified commit by an exempt bot, or the pin workflow app's commit
-//      touching only package.json / yarn.lock / package-lock.json;
-//      (RESIDUAL: that app identity is matched by name and email and is unsigned, so it is forgeable by
+//   2. the first commit is a bot commit committed by GitHub itself (web-flow, valid signature, bot
+//      author), every commit is such a commit or the pin workflow app's commit touching only
+//      package.json / yarn.lock / package-lock.json, and the last commit is the head. Route (a)
+//      therefore TRUSTS GITHUB'S web-flow SIGNATURE: author alone is just an email anyone can set;
+//      (RESIDUAL for the app commits: that identity is matched by name and email and is unsigned, so it is forgeable by
 //      anyone who can push; the manifest-only file rule bounds it, and the follow-up is a signed commit);
 //   3. the head did not move while this was being checked.
 // Anything unreadable, truncated or failing falls through to review -- fail closed.
@@ -254,7 +256,7 @@ if (cfg.exemptAuthors.includes(author)) {
     const files = await apiAll(`/repos/${owner}/${repo}/pulls/${cfg.prNumber}/files`, 30);
     const commits = await apiAll(`/repos/${owner}/${repo}/pulls/${cfg.prNumber}/commits`, Math.ceil(COMMITS_CAP / 100));
     verdict = isDependencyOnlyChange(files);
-    if (verdict.dependencyOnly && !commitsAreTrusted(commits, files, cfg.exemptAuthors)) {
+    if (verdict.dependencyOnly && !commitsAreTrusted(commits, files, cfg.exemptAuthors, headSha)) {
       verdict = { dependencyOnly: false, offending: '(a commit that is not a verified bot commit)' };
     }
     if (verdict.dependencyOnly) {
