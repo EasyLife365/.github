@@ -115,7 +115,7 @@ on:
         type: string
         default: 'agent-review'
       exempt-authors:
-        description: 'Comma-separated authors exempt from agent review. Bump and dependency pull requests are proven by CI, and reviewing a version-number diff is spend with nothing to find.'
+        description: 'Comma-separated authors exempt from agent review, but only while the pull request changes nothing except dependency manifests, lockfiles and workflow `uses:` lines. Any other change is reviewed normally whoever the author is. Bump pull requests are proven by CI, and reviewing a version-number diff is spend with nothing to find.'
         required: false
         type: string
         default: 'dependabot[bot],renovate[bot]'

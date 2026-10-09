@@ -64,6 +64,7 @@
 const PR_NUMBER_IN_REF = /\/pr-(\d+)-[0-9a-f]+$/;
 
 import { appendFileSync } from 'node:fs';
+import { isDependencyOnlyChange } from './lib/dependency-only.mjs';
 
 const env = process.env;
 
@@ -123,9 +124,9 @@ async function api(path) {
  * one page the newest review is on the LAST page. Reading only the first would report "no review"
  * on exactly the busy pull requests where one is most likely to exist.
  */
-async function apiAll(path) {
+async function apiAll(path, maxPages = 10) {
   const items = [];
-  for (let page = 1; page <= 10; page++) {
+  for (let page = 1; page <= maxPages; page++) {
     const batch = await api(`${path}?per_page=100&page=${page}`);
     items.push(...batch);
     if (batch.length < 100) break;
@@ -229,10 +230,27 @@ if (pull.draft) {
 
 // Bump and dependency pull requests are exempt by design -- CI proves them, and a review of a
 // version-number diff is spend with nothing to find.
+//
+// The exemption is by author AND by content (EasyLife365/.github#146). The author never changes when
+// someone with write access pushes more commits to a dependabot/* branch, so on its own it would let
+// a human ship arbitrary code under a bot's name with no review. The pull request's files decide:
+// only dependency manifests, lockfiles and `uses:` bumps in workflows are exempt (see
+// scripts/lib/dependency-only.mjs). Anything else, a failed listing or a listing that may be
+// truncated falls through to the normal review path -- fail closed.
 if (cfg.exemptAuthors.includes(author)) {
-  await postStatus(statusSha, 'success', `Exempt author (${author})`);
-  console.log(`Author ${author} is exempt from agent review.`);
-  process.exit(0);
+  // The files API lists at most 3000 files, 100 per page.
+  let verdict;
+  try {
+    verdict = isDependencyOnlyChange(await apiAll(`/repos/${owner}/${repo}/pulls/${cfg.prNumber}/files`, 30));
+  } catch (error) {
+    verdict = { dependencyOnly: false, offending: `(file listing failed: ${error.message})` };
+  }
+  if (verdict.dependencyOnly) {
+    await postStatus(statusSha, 'success', `Exempt author (${author}): dependency files only`);
+    console.log(`Author ${author} is exempt from agent review: the pull request changes dependency files only.`);
+    process.exit(0);
+  }
+  console.log(`Author ${author} is exempt-listed but the pull request changes ${verdict.offending}; reviewing normally.`);
 }
 
 // WHO IS ALLOWED TO SATISFY THIS CHECK
