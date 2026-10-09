@@ -64,7 +64,7 @@
 const PR_NUMBER_IN_REF = /\/pr-(\d+)-[0-9a-f]+$/;
 
 import { appendFileSync } from 'node:fs';
-import { isDependencyOnlyChange } from './lib/dependency-only.mjs';
+import { isDependencyOnlyChange, commitsAreTrusted, COMMITS_CAP } from './lib/dependency-only.mjs';
 
 const env = process.env;
 
@@ -231,19 +231,39 @@ if (pull.draft) {
 // Bump and dependency pull requests are exempt by design -- CI proves them, and a review of a
 // version-number diff is spend with nothing to find.
 //
-// The exemption is by author AND by content (EasyLife365/.github#146). The author never changes when
-// someone with write access pushes more commits to a dependabot/* branch, so on its own it would let
-// a human ship arbitrary code under a bot's name with no review. The pull request's files decide:
-// only dependency manifests, lockfiles and `uses:` bumps in workflows are exempt (see
-// scripts/lib/dependency-only.mjs). Anything else, a failed listing or a listing that may be
-// truncated falls through to the normal review path -- fail closed.
+// The exemption is by author AND by content AND by provenance (EasyLife365/.github#146). The author
+// never changes when someone with write access pushes more commits to a dependabot/* branch, so on
+// its own it would let a human ship arbitrary code under a bot's name with no review. So ALL of these
+// must hold, or the normal review runs:
+//   1. the files are only dependency manifests/lockfiles and paired `uses:` ref bumps in workflows;
+//   2. every commit is a GitHub-verified commit by an exempt bot, or the pin workflow app's commit
+//      touching only package.json / yarn.lock / package-lock.json;
+//   3. the head did not move while this was being checked.
+// Anything unreadable, truncated or failing falls through to review -- fail closed.
+//
+// WHAT REMAINS TRUSTED once the above holds: package.json scripts, lockfile resolved URLs and the
+// contents of .csproj / .props / global.json are trusted IN FULL. This check judges which files
+// changed and who committed them, not what a bot-authored manifest change does at install or build.
+// See scripts/lib/dependency-only.mjs.
 if (cfg.exemptAuthors.includes(author)) {
-  // The files API lists at most 3000 files, 100 per page.
   let verdict;
   try {
-    verdict = isDependencyOnlyChange(await apiAll(`/repos/${owner}/${repo}/pulls/${cfg.prNumber}/files`, 30));
+    // The files API lists at most 3000 files, 100 per page; the commits API at most 250.
+    const files = await apiAll(`/repos/${owner}/${repo}/pulls/${cfg.prNumber}/files`, 30);
+    const commits = await apiAll(`/repos/${owner}/${repo}/pulls/${cfg.prNumber}/commits`, Math.ceil(COMMITS_CAP / 100));
+    verdict = isDependencyOnlyChange(files);
+    if (verdict.dependencyOnly && !commitsAreTrusted(commits, files, cfg.exemptAuthors)) {
+      verdict = { dependencyOnly: false, offending: '(a commit that is not a verified bot commit)' };
+    }
+    if (verdict.dependencyOnly) {
+      // Guard against a push between the reads above and the status below.
+      const again = await api(`/repos/${owner}/${repo}/pulls/${cfg.prNumber}`);
+      if (again.head.sha !== headSha) {
+        verdict = { dependencyOnly: false, offending: '(the head moved while checking)' };
+      }
+    }
   } catch (error) {
-    verdict = { dependencyOnly: false, offending: `(file listing failed: ${error.message})` };
+    verdict = { dependencyOnly: false, offending: `(lookup failed: ${error.message})` };
   }
   if (verdict.dependencyOnly) {
     await postStatus(statusSha, 'success', `Exempt author (${author}): dependency files only`);
