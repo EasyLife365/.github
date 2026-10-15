@@ -56,13 +56,14 @@ jobs:
           # the job, readable by any code that runs afterward.
           persist-credentials: false
 
+      # No package-manager cache: a PR or merge-queue ref cannot reuse another one's cache and push CI no longer
+      # seeds main, so every ref saved its own 1+ GB copy for no gain over a cold install (#155).
       - uses: actions/setup-node@v7
         env:
           GITHUB_PACKAGE_TOKEN: ${{ (inputs.checkout-ref != '' && secrets.GITHUB_PACKAGE_TOKEN_READONLY) || secrets.GITHUB_PACKAGE_TOKEN }}
           NODE_AUTH_TOKEN: ${{ (inputs.checkout-ref != '' && secrets.GITHUB_PACKAGE_TOKEN_READONLY) || secrets.GITHUB_PACKAGE_TOKEN }}
         with:
           node-version: ${{ inputs.node-version }}
-          cache: ${{ inputs.yarn && 'yarn' || 'npm' }}
           registry-url: 'https://npm.pkg.github.com'
           scope: '@easylife365'
 
