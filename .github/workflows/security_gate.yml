@@ -186,10 +186,11 @@ jobs:
           ref: ${{ inputs.checkout-ref || github.sha }}
           persist-credentials: false
 
+      # No `cache: yarn`: a PR or merge-queue ref cannot reuse another one's cache, so every run saved its own
+      # ~1.4 GB copy that rarely hit, filling the 10 GB repo quota and evicting useful caches (#153).
       - uses: actions/setup-node@v7
         with:
           node-version: ${{ inputs.node-version }}
-          cache: yarn
 
       - name: Install without running scripts
         run: yarn install --frozen-lockfile --ignore-scripts
