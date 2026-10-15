@@ -48,7 +48,7 @@ jobs:
         uses: actions/checkout@v7
 
       - name: Download built artifact from GitHub
-        uses: actions/download-artifact@v8
+        uses: actions/download-artifact@v8.0.2
         with:
           name: ${{ inputs.app-artifact }}
           path: ${{ inputs.app-location }}/dist
@@ -73,7 +73,7 @@ jobs:
 
       - name: Upload merged build artifact to GitHub
         if: ${{ inputs.artifact-output != '' }}
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@v7.0.2
         with:
           name: ${{ inputs.artifact-output }}
           path: ${{ inputs.app-location }}/build_final
