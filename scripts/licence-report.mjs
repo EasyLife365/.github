@@ -49,8 +49,11 @@ const annotate = (level, message) => {
   const safe = String(message).replace(/%/g, '%25').replace(/\r/g, '%0D').replace(/\n/g, '%0A');
   console.log(`::${level} title=Licence check::${safe}`);
 };
+// Backslash first, so the escapes added for the other characters are not themselves escaped.
 const cell = (s) =>
-  String(s ?? '(none)').replace(/[|`<>&\r\n]/g, (ch) => ({ '|': '\\|', '`': "'", '<': '&lt;', '>': '&gt;', '&': '&amp;' })[ch] ?? ' ');
+  String(s ?? '(none)')
+    .replace(/\\/g, '\\\\')
+    .replace(/[|`<>&*_[\]()~\r\n]/g, (ch) => ({ '`': "'", '<': '&lt;', '>': '&gt;', '&': '&amp;', '\r': ' ', '\n': ' ' })[ch] ?? `\\${ch}`);
 
 let packages;
 try {
@@ -60,6 +63,13 @@ try {
   // A listing that is missing or unreadable means the tool failed, which is not the same as
   // "no findings": say so, and fail only when the gate is enforcing.
   annotate(enforce ? 'error' : 'warning', `${title}: could not read the licence listing (${e.message}).`);
+  process.exit(enforce ? 1 : 0);
+}
+
+// A listing with no packages at all means the tool found nothing to read (no install, wrong
+// directory), not that there is nothing to check. Say so rather than report a clean result.
+if (packages.length === 0) {
+  annotate(enforce ? 'error' : 'warning', `${title}: the licence listing contains no packages, so nothing was checked.`);
   process.exit(enforce ? 1 : 0);
 }
 
@@ -80,7 +90,7 @@ lines.push(`| Forbidden | ${r.forbidden.length} |`);
 lines.push(`| Excluded (listed in .licenceignore on the default branch) | ${r.excluded.length} |`);
 lines.push(`| Own packages (not checked) | ${r.own.length} |`, '');
 
-for (const [key, heading] of [['forbidden', 'Forbidden'], ['unknown', 'Unknown'], ['needs-review', 'Needs review']]) {
+for (const [key, heading] of [['forbidden', 'Forbidden'], ['excludedForbidden', 'Excluded, but now forbidden'], ['unknown', 'Unknown'], ['needs-review', 'Needs review']]) {
   const list = [...r[key]].sort((a, b) => a.id.localeCompare(b.id));
   if (list.length === 0) continue;
   lines.push(`#### ${heading}`, '', '| Package | Version | Licence |', '|---|---|---|');
@@ -98,6 +108,9 @@ if (process.env.GITHUB_STEP_SUMMARY) appendFileSync(process.env.GITHUB_STEP_SUMM
 
 for (const p of [...r.forbidden, ...r.unknown].slice(0, MAX_ANNOTATIONS)) {
   annotate(level, `${p.id}@${p.version}: ${p.licence ?? 'no licence information'}`);
+}
+for (const p of r.excludedForbidden.slice(0, MAX_ANNOTATIONS)) {
+  annotate('warning', `${p.id}@${p.version} is excluded in .licenceignore but its licence is now ${p.licence}; review the exclusion.`);
 }
 if (failing > 0) {
   annotate(level, `${title}: ${r.forbidden.length} forbidden and ${r.unknown.length} unknown licences (${r['needs-review'].length} more need review).`);

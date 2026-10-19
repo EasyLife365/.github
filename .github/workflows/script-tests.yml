@@ -23,4 +23,4 @@ jobs:
           persist-credentials: false
 
       - name: Run script unit tests
-        run: node --test scripts/lib/dependency-only.test.mjs scripts/lib/licence-policy.test.mjs
+        run: node --test scripts/lib/dependency-only.test.mjs scripts/lib/licence-policy.test.mjs scripts/lib/licence-report.test.mjs

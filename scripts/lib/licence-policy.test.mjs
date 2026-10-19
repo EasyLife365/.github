@@ -47,8 +47,58 @@ test('a licence npm guessed from a file (trailing *) is at least needs-review', 
   assert.equal(c('GPL-3.0*'), 'forbidden');
 });
 
-test('a GPL-ish name that is not GPL is not caught by accident', () => {
-  assert.equal(c('GPLv3-lookalike'), 'needs-review');
+test('the legacy GPL spellings npm and NuGet metadata still use are forbidden', () => {
+  for (const l of ['GPLv3', 'GPL', 'LGPLv2.1', 'AGPLv3', 'gpl-3.0', 'GPL-3.0-or-later', '(MIT AND GPLv2)']) assert.equal(c(l), 'forbidden', l);
+});
+
+test('UNKNOWN, as license-checker spells no licence, is unknown in any case', () => {
+  for (const l of ['UNKNOWN', 'unknown', 'Unknown', 'null', 'NONE']) assert.equal(c(l), 'unknown', l);
+});
+
+test('npm licenses arrays are read conservatively: every entry must be acceptable', () => {
+  const [p] = readNpm({ 'a@1.0.0': { licenses: ['MIT', 'GPL-3.0'] } });
+  assert.equal(c(p.licence), 'forbidden');
+});
+
+test('consecutive stars collapse and still match', () => {
+  assert.equal(isExcluded('Foo.Bar', '1', ['F**o.B***r']), true);
+});
+
+test('own-package prefixes are exact and case-sensitive', () => {
+  const own = (id) => assess([{ id, version: '1', licence: 'MIT' }], policy, []).own.length;
+  assert.equal(own('EL.Core.Api'), 1);
+  assert.equal(own('@easylife365/react-core'), 1);
+  assert.equal(own('el.core.api'), 0);
+  assert.equal(own('EL.Evil'), 0);
+});
+
+test('an excluded package whose licence is now forbidden is surfaced', () => {
+  const r = assess([{ id: 'x', version: '2', licence: 'AGPL-3.0-only' }], policy, ['x']);
+  assert.equal(r.excluded.length, 1);
+  assert.equal(r.excludedForbidden.length, 1);
+});
+
+const fixture = (name) => JSON.parse(readFileSync(new URL(`./fixtures/${name}`, import.meta.url), 'utf8'));
+
+test('real nuget-license output (EasyLife365-Core, trimmed): read, deduped and classified', () => {
+  const pkgs = readNuget(fixture('nuget-license-core.json'));
+  assert.equal(pkgs.length, new Set(pkgs.map((p) => `${p.id}@${p.version}`)).size);
+  const r = assess(pkgs, policy, []);
+  const ids = (list) => list.map((p) => p.id);
+  assert.ok(ids(r.allowed).includes('AngleSharp'));
+  assert.ok(ids(r.allowed).includes('CsvHelper'), 'MS-PL OR Apache-2.0 is allowed');
+  // Real shapes of "cannot tell": no License key at all (with ValidationErrors), a file name, a URL.
+  for (const id of ['diskann-garnet', 'Apache.Arrow', 'Fare', 'Microsoft.AspNetCore.Http']) assert.ok(ids(r.unknown).includes(id), id);
+  assert.equal(r.forbidden.length, 0);
+});
+
+test('real license-checker output (EasyLife-React-Core, trimmed): read and classified', () => {
+  const pkgs = readNpm(fixture('license-checker-react-core.json'));
+  assert.ok(pkgs.some((p) => p.id === '@azure/msal-browser' && p.version === '5.24.0'));
+  const r = assess(pkgs, policy, []);
+  assert.deepEqual(r.own.map((p) => p.id), ['@easylife365/react-core']);
+  assert.deepEqual(r['needs-review'].map((p) => p.id), ['@fortawesome/free-solid-svg-icons']);
+  for (const id of ['dompurify', 'argparse', 'sax', 'type-fest', '@azure/msal-browser']) assert.ok(r.allowed.some((p) => p.id === id), id);
 });
 
 test('exclusion file: comments, CRLF, wildcards, exact versions', () => {
@@ -87,6 +137,6 @@ test('nuget reader dedupes a package used by several projects', () => {
 test('npm reader splits scoped names at the last @', () => {
   assert.deepEqual(
     readNpm({ '@azure/msal-browser@5.24.0': { licenses: 'MIT' }, 'x@1.0.0': { licenses: ['MIT', 'ISC'] } }),
-    [{ id: '@azure/msal-browser', version: '5.24.0', licence: 'MIT' }, { id: 'x', version: '1.0.0', licence: '(MIT OR ISC)' }],
+    [{ id: '@azure/msal-browser', version: '5.24.0', licence: 'MIT' }, { id: 'x', version: '1.0.0', licence: 'MIT AND ISC' }],
   );
 });

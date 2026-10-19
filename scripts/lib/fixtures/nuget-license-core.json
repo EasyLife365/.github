@@ -1,0 +1,146 @@
+[
+  {
+    "PackageId": "AngleSharp",
+    "PackageVersion": "1.8.3",
+    "License": "MIT",
+    "LicenseUrl": "https://licenses.nuget.org/MIT",
+    "LicenseInformationOrigin": 0
+  },
+  {
+    "PackageId": "Apache.Arrow",
+    "PackageVersion": "22.1.0",
+    "License": "LICENSE.txt",
+    "LicenseUrl": "https://aka.ms/deprecateLicenseUrl",
+    "LicenseInformationOrigin": 5,
+    "ValidationErrors": [
+      {
+        "Error": "Unable to determine license from the given license file",
+        "Context": "Project.csproj"
+      },
+      {
+        "Error": "Unable to determine license from the given license file",
+        "Context": "Project.csproj"
+      }
+    ]
+  },
+  {
+    "PackageId": "BouncyCastle.Cryptography",
+    "PackageVersion": "2.7.0",
+    "License": "MIT",
+    "LicenseUrl": "https://licenses.nuget.org/MIT",
+    "LicenseInformationOrigin": 0
+  },
+  {
+    "PackageId": "Castle.Core",
+    "PackageVersion": "5.1.1",
+    "License": "Apache-2.0",
+    "LicenseUrl": "https://licenses.nuget.org/Apache-2.0",
+    "LicenseInformationOrigin": 0
+  },
+  {
+    "PackageId": "Castle.Core",
+    "PackageVersion": "5.2.1",
+    "License": "Apache-2.0",
+    "LicenseUrl": "https://licenses.nuget.org/Apache-2.0",
+    "LicenseInformationOrigin": 0
+  },
+  {
+    "PackageId": "CsvHelper",
+    "PackageVersion": "33.1.0",
+    "License": "MS-PL OR Apache-2.0",
+    "LicenseUrl": "https://licenses.nuget.org/MS-PL%20OR%20Apache-2.0",
+    "LicenseInformationOrigin": 0
+  },
+  {
+    "PackageId": "diskann-garnet",
+    "PackageVersion": "5.0.3",
+    "LicenseInformationOrigin": 2,
+    "ValidationErrors": [
+      {
+        "Error": "No license information found",
+        "Context": "Project.csproj"
+      }
+    ]
+  },
+  {
+    "PackageId": "Fare",
+    "PackageVersion": "2.2.1",
+    "License": "https://github.com/moodmosaic/Fare/blob/master/LICENSE",
+    "LicenseUrl": "https://github.com/moodmosaic/Fare/blob/master/LICENSE",
+    "LicenseInformationOrigin": 1,
+    "ValidationErrors": [
+      {
+        "Error": "Cannot determine License type for url https://github.com/moodmosaic/Fare/blob/master/LICENSE",
+        "Context": "Project.csproj"
+      }
+    ]
+  },
+  {
+    "PackageId": "Google.Protobuf",
+    "PackageVersion": "3.28.0",
+    "License": "BSD-3-Clause",
+    "LicenseUrl": "https://licenses.nuget.org/BSD-3-Clause",
+    "LicenseInformationOrigin": 0
+  },
+  {
+    "PackageId": "Google.Protobuf",
+    "PackageVersion": "3.32.1",
+    "License": "BSD-3-Clause",
+    "LicenseUrl": "https://licenses.nuget.org/BSD-3-Clause",
+    "LicenseInformationOrigin": 0
+  },
+  {
+    "PackageId": "Microsoft.AspNetCore.Http",
+    "PackageVersion": "2.1.22",
+    "License": "https://raw.githubusercontent.com/aspnet/AspNetCore/2.0.0/LICENSE.txt",
+    "LicenseUrl": "https://raw.githubusercontent.com/aspnet/AspNetCore/2.0.0/LICENSE.txt",
+    "LicenseInformationOrigin": 1,
+    "ValidationErrors": [
+      {
+        "Error": "Cannot determine License type for url https://raw.githubusercontent.com/aspnet/AspNetCore/2.0.0/LICENSE.txt",
+        "Context": "Project.csproj"
+      },
+      {
+        "Error": "Cannot determine License type for url https://raw.githubusercontent.com/aspnet/AspNetCore/2.0.0/LICENSE.txt",
+        "Context": "Project.csproj"
+      }
+    ]
+  },
+  {
+    "PackageId": "Microsoft.AspNetCore.Http",
+    "PackageVersion": "2.2.2",
+    "License": "https://raw.githubusercontent.com/aspnet/AspNetCore/2.0.0/LICENSE.txt",
+    "LicenseUrl": "https://raw.githubusercontent.com/aspnet/AspNetCore/2.0.0/LICENSE.txt",
+    "LicenseInformationOrigin": 1,
+    "ValidationErrors": [
+      {
+        "Error": "Cannot determine License type for url https://raw.githubusercontent.com/aspnet/AspNetCore/2.0.0/LICENSE.txt",
+        "Context": "Project.csproj"
+      },
+      {
+        "Error": "Cannot determine License type for url https://raw.githubusercontent.com/aspnet/AspNetCore/2.0.0/LICENSE.txt",
+        "Context": "Project.csproj"
+      }
+    ]
+  },
+  {
+    "PackageId": "Microsoft.AspNetCore.Http",
+    "PackageVersion": "2.3.9",
+    "License": "https://raw.githubusercontent.com/aspnet/AspNetCore/2.0.0/LICENSE.txt",
+    "LicenseUrl": "https://raw.githubusercontent.com/aspnet/AspNetCore/2.0.0/LICENSE.txt",
+    "LicenseInformationOrigin": 1,
+    "ValidationErrors": [
+      {
+        "Error": "Cannot determine License type for url https://raw.githubusercontent.com/aspnet/AspNetCore/2.0.0/LICENSE.txt",
+        "Context": "Project.csproj"
+      }
+    ]
+  },
+  {
+    "PackageId": "Moq",
+    "PackageVersion": "4.21.0",
+    "License": "BSD-3-Clause",
+    "LicenseUrl": "https://licenses.nuget.org/BSD-3-Clause",
+    "LicenseInformationOrigin": 0
+  }
+]

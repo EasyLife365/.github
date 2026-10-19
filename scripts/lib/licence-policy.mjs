@@ -18,10 +18,14 @@
 export const RANK = { allowed: 0, 'needs-review': 1, unknown: 2, forbidden: 3 };
 const BY_RANK = Object.keys(RANK);
 
-/** `*` is the only wildcard; everything else is literal and the match is case-insensitive. */
-export function globToRegExp(glob) {
-  const body = glob.split('*').map((part) => part.replace(/[.+?^${}()|[\]\\/]/g, '\\$&')).join('.*');
-  return new RegExp(`^${body}$`, 'i');
+/**
+ * `*` is the only wildcard; everything else is literal. Case-insensitive unless asked otherwise:
+ * licence ids and package names are matched loosely, own-package prefixes exactly. Consecutive
+ * stars collapse to one so a hostile entry cannot build a backtracking pattern.
+ */
+export function globToRegExp(glob, caseSensitive = false) {
+  const body = glob.replace(/\*+/g, '*').split('*').map((part) => part.replace(/[.+?^${}()|[\]\\/]/g, '\\$&')).join('.*');
+  return new RegExp(`^${body}$`, caseSensitive ? '' : 'i');
 }
 
 const SPDX_ID = /^[A-Za-z0-9][A-Za-z0-9.+-]*$/;
@@ -32,7 +36,7 @@ function classifyId(raw, policy) {
   if (guessed) id = id.slice(0, -1);
   const bare = id.replace(/\+$/, '');
   let outcome;
-  if (!SPDX_ID.test(id) || /^(UNLICENSED|NONE|NOASSERTION|UNDEFINED|SEE|LICENSE|LICENCE)$/i.test(bare)
+  if (!SPDX_ID.test(id) || /^(UNLICENSED|UNKNOWN|NONE|NOASSERTION|UNDEFINED|NULL|SEE|LICENSE|LICENCE)$/i.test(bare)
     || /^(https?:|custom)/i.test(id) || /\.(txt|md|html?)$/i.test(id)) {
     outcome = 'unknown';
   } else if (policy.allowedSet.has(bare.toLowerCase()) && !id.endsWith('+')) {
@@ -49,7 +53,7 @@ export function loadPolicy(json) {
   return {
     allowedSet: new Set(json.allowed.map((s) => s.toLowerCase())),
     forbiddenRegExps: json.forbidden.map(globToRegExp),
-    ownRegExps: (json.ownPackages ?? []).map(globToRegExp),
+    ownRegExps: (json.ownPackages ?? []).map((g) => globToRegExp(g, true)),
   };
 }
 
@@ -134,17 +138,26 @@ export function readNuget(json) {
 export function readNpm(json) {
   return Object.entries(json).map(([key, v]) => {
     const at = key.lastIndexOf('@');
-    const licence = Array.isArray(v.licenses) ? `(${v.licenses.join(' OR ')})` : v.licenses;
+    // An array is the legacy "several licences" form. It does not say whether they are alternatives
+    // or all apply, so assume the stricter reading: every one must be acceptable.
+    const licence = Array.isArray(v.licenses) ? v.licenses.join(' AND ') : v.licenses;
     return { id: key.slice(0, at), version: key.slice(at + 1), licence };
   });
 }
 
-/** Sorts packages into the four outcomes plus the excluded and own ones. */
+/**
+ * Sorts packages into the four outcomes plus the excluded and own ones. `excludedForbidden` lists
+ * excluded packages whose current licence is forbidden: an exclusion records a decision about a
+ * package as reviewed, and a new version can change its licence.
+ */
 export function assess(packages, policy, ignoreEntries) {
-  const result = { allowed: [], 'needs-review': [], unknown: [], forbidden: [], excluded: [], own: [] };
+  const result = { allowed: [], 'needs-review': [], unknown: [], forbidden: [], excluded: [], excludedForbidden: [], own: [] };
   for (const p of packages) {
     if (policy.ownRegExps.some((re) => re.test(p.id))) result.own.push(p);
-    else if (isExcluded(p.id, p.version, ignoreEntries)) result.excluded.push(p);
+    else if (isExcluded(p.id, p.version, ignoreEntries)) {
+      result.excluded.push(p);
+      if (classifyLicence(p.licence, policy) === 'forbidden') result.excludedForbidden.push(p);
+    }
     else result[classifyLicence(p.licence, policy)].push(p);
   }
   return result;

@@ -1,0 +1,43 @@
+{
+  "@azure/msal-browser@5.24.0": {
+    "licenses": "MIT",
+    "repository": "https://github.com/AzureAD/microsoft-authentication-library-for-js",
+    "publisher": "Microsoft",
+    "licenseFile": "node_modules/@azure/msal-browser/LICENSE"
+  },
+  "@easylife365/react-core@0.9.7": {
+    "licenses": "Custom: LICENSE",
+    "repository": "https://github.com/EasyLife365/EasyLife-React-Core",
+    "publisher": "EasyLife 365",
+    "licenseFile": "node_modules/@easylife365/react-core/LICENSE"
+  },
+  "@fortawesome/free-solid-svg-icons@7.3.1": {
+    "licenses": "(CC-BY-4.0 AND MIT)",
+    "repository": "https://github.com/FortAwesome/Font-Awesome",
+    "publisher": "The Font Awesome Team",
+    "licenseFile": "node_modules/@fortawesome/free-solid-svg-icons/LICENSE"
+  },
+  "argparse@2.0.1": {
+    "licenses": "Python-2.0",
+    "repository": "https://github.com/nodeca/argparse",
+    "licenseFile": "node_modules/argparse/LICENSE"
+  },
+  "dompurify@3.4.16": {
+    "licenses": "(MPL-2.0 OR Apache-2.0)",
+    "repository": "https://github.com/cure53/DOMPurify",
+    "publisher": "Dr.-Ing. Mario Heiderich, Cure53",
+    "licenseFile": "node_modules/dompurify/LICENSE"
+  },
+  "sax@1.6.1": {
+    "licenses": "BlueOak-1.0.0",
+    "repository": "https://github.com/isaacs/sax-js",
+    "publisher": "Isaac Z. Schlueter",
+    "licenseFile": "node_modules/sax/LICENSE"
+  },
+  "type-fest@2.19.0": {
+    "licenses": "(MIT OR CC0-1.0)",
+    "repository": "https://github.com/sindresorhus/type-fest",
+    "publisher": "Sindre Sorhus",
+    "licenseFile": "node_modules/type-fest/LICENSE"
+  }
+}

@@ -1,6 +1,7 @@
-# Dependabot config -- github-actions ecosystem only, for now.
+# Dependabot config -- github-actions, plus the one npm manifest in this repository that has no
+# private packages (tools/licence-checker, the pinned licence lister the Security gate installs).
 #
-# nuget and npm are deliberately not enabled yet: every repository's own CI needs
+# nuget and npm are deliberately not enabled for the product repositories yet: every repository's own CI needs
 # GITHUB_PACKAGE_TOKEN to resolve EL.* / @easylife365/* packages from GitHub Packages,
 # and no equivalent credential exists for Dependabot anywhere in the estate -- checked
 # both org- and repo-level Dependabot secrets, none exist. Adding those ecosystems
@@ -24,5 +25,13 @@ updates:
         update-types:
           - "major"
     open-pull-requests-limit: 10
+    labels:
+      - "dependencies"
+  - package-ecosystem: "npm"
+    directory: "/tools/licence-checker"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    open-pull-requests-limit: 5
     labels:
       - "dependencies"

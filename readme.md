@@ -48,19 +48,39 @@ request. Every package gets one of four outcomes:
 
 SPDX expressions are evaluated, not text-matched: `MIT OR GPL-3.0-only` is allowed (the consumer picks
 MIT), `MIT AND CC-BY-4.0` needs review (both apply), and a `WITH` exception never rescues a forbidden
-licence. Our own packages (`ownPackages`: `@easylife365/*`, `EL.*`) are not checked.
+licence. Our own packages (`ownPackages`, matched case-sensitively: `@easylife365/*` and the published
+`EL.Core.*`, `EL.Storage.*`, `EL.Cache.*`, `EL.Serialization.*`, `EL.Approvals.*`, `EL.Notification.*`,
+`EL.EasyHub.*` families) are not checked. An empty listing is never a clean result: it warns, and fails
+when enforcing.
 
 **Excluding a reviewed package** goes in `.licenceignore` at the root of the caller repository, read from
 its **default branch** (never from the pull request being checked, so a pull request cannot hide its own
 findings; an entry takes effect once merged). One package per line, `*` is the wildcard, `name@version`
 pins a single version, `#` starts a comment. Say why in the comment. Keep entries narrow:
-`Microsoft.AspNetCore.*` is a decision about a family, `*` is a decision about everything.
+`Microsoft.AspNetCore.*` is a decision about a family, `*` is a decision about everything. A package
+that is excluded but whose current licence is forbidden still raises a warning, because a new version
+can change the licence.
 
-**Tools**, pinned to exact versions in the workflow and not tracked by Dependabot, so bump them by hand:
-[nuget-license](https://github.com/sensslen/nuget-license) 4.0.18 for .NET (the whole graph, transitive
-included) and [license-checker-rseidelsohn](https://github.com/RSeidelsohn/license-checker-rseidelsohn)
-5.0.1 for npm (production dependencies only). `scripts/licence-report.mjs` classifies their output and
-writes the report; `scripts/lib/licence-policy.test.mjs` tests it.
+**Tools**, both pinned:
+- [nuget-license](https://github.com/sensslen/nuget-license) 4.0.18 for .NET (the whole graph, transitive
+  included), pinned by version in the workflow and installed from nuget.org only. It has no manifest
+  for Dependabot to track, so bump it by hand.
+- [license-checker-rseidelsohn](https://github.com/RSeidelsohn/license-checker-rseidelsohn) 5.0.1 for npm,
+  pinned by `tools/licence-checker/package-lock.json` in this repository and installed with
+  `npm ci --ignore-scripts`, so its own dependencies cannot drift or run a script. Dependabot tracks that
+  directory. A repository with one `package.json` is listed for production dependencies only. A yarn
+  workspace is listed for everything installed, development tooling included, because the tool's
+  `--production` reads only the root manifest and would miss packages only the workspace apps use.
+
+`scripts/licence-report.mjs` classifies their output and writes the report; `scripts/lib/licence-policy.test.mjs`
+and `scripts/lib/licence-report.test.mjs` test it, against output trimmed from real runs.
+
+**Accepted risk while the check only reports.** The check inspects the pull request's own dependency
+graph, so a hostile pull request author can change the listing, and only a check that enforces can stop
+that. In report-only mode the licence jobs are advice, not a control. The exclusion list cannot be edited
+by the pull request being checked (it is read from the default branch), the package token reaches only the
+restore and install steps, and the policy, reporter and tool lockfile come from this repository at the
+workflow's own commit, not from the pull request.
 
 ### Versioning
 

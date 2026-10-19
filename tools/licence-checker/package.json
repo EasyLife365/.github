@@ -1,0 +1,8 @@
+{
+  "name": "licence-checker-tool",
+  "private": true,
+  "description": "Pinned install of the npm licence lister used by the Security gate (security_gate.yml). Installed with npm ci --ignore-scripts; kept current by Dependabot.",
+  "dependencies": {
+    "license-checker-rseidelsohn": "5.0.1"
+  }
+}

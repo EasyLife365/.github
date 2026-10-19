@@ -15,19 +15,25 @@
     "Python-2.0"
   ],
   "forbidden": [
-    "GPL-*",
-    "AGPL-*",
-    "LGPL-*",
-    "SSPL-*",
-    "EUPL-*",
-    "OSL-*",
-    "BUSL-*",
+    "GPL*",
+    "AGPL*",
+    "LGPL*",
+    "SSPL*",
+    "EUPL*",
+    "OSL*",
+    "BUSL*",
     "CC-BY-NC*",
     "CC-BY-ND*",
     "Commons-Clause*"
   ],
   "ownPackages": [
     "@easylife365/*",
-    "EL.*"
+    "EL.Core.*",
+    "EL.Storage.*",
+    "EL.Cache.*",
+    "EL.Serialization.*",
+    "EL.Approvals.*",
+    "EL.Notification.*",
+    "EL.EasyHub.*"
   ]
 }

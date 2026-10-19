@@ -95,8 +95,11 @@ jobs:
     steps:
       - name: Refuse checkout-ref for anyone but an allow-listed bot
         if: ${{ inputs.checkout-ref != '' && github.actor != 'dependabot[bot]' && github.actor != 'renovate[bot]' }}
+        env:
+          CHECKOUT_REF: ${{ inputs.checkout-ref }}
+          ACTOR: ${{ github.actor }}
         run: |
-          echo "::error::checkout-ref was passed ('${{ inputs.checkout-ref }}') but actor '${{ github.actor }}' is not dependabot[bot] or renovate[bot]. Refusing to check out that ref rather than trust a caller-side actor gate that this workflow cannot see or verify."
+          echo "::error::checkout-ref was passed ('${CHECKOUT_REF}') but actor '${ACTOR}' is not dependabot[bot] or renovate[bot]. Refusing to check out that ref rather than trust a caller-side actor gate that this workflow cannot see or verify."
           exit 1
 
       - uses: actions/checkout@v7
@@ -160,8 +163,11 @@ jobs:
     steps:
       - name: Refuse checkout-ref for anyone but an allow-listed bot
         if: ${{ inputs.checkout-ref != '' && github.actor != 'dependabot[bot]' && github.actor != 'renovate[bot]' }}
+        env:
+          CHECKOUT_REF: ${{ inputs.checkout-ref }}
+          ACTOR: ${{ github.actor }}
         run: |
-          echo "::error::checkout-ref was passed ('${{ inputs.checkout-ref }}') but actor '${{ github.actor }}' is not dependabot[bot] or renovate[bot]. Refusing to check out that ref rather than trust a caller-side actor gate that this workflow cannot see or verify."
+          echo "::error::checkout-ref was passed ('${CHECKOUT_REF}') but actor '${ACTOR}' is not dependabot[bot] or renovate[bot]. Refusing to check out that ref rather than trust a caller-side actor gate that this workflow cannot see or verify."
           exit 1
 
       - uses: actions/checkout@v7
@@ -196,8 +202,11 @@ jobs:
     steps:
       - name: Refuse checkout-ref for anyone but an allow-listed bot
         if: ${{ inputs.checkout-ref != '' && github.actor != 'dependabot[bot]' && github.actor != 'renovate[bot]' }}
+        env:
+          CHECKOUT_REF: ${{ inputs.checkout-ref }}
+          ACTOR: ${{ github.actor }}
         run: |
-          echo "::error::checkout-ref was passed ('${{ inputs.checkout-ref }}') but actor '${{ github.actor }}' is not dependabot[bot] or renovate[bot]. Refusing to check out that ref rather than trust a caller-side actor gate that this workflow cannot see or verify."
+          echo "::error::checkout-ref was passed ('${CHECKOUT_REF}') but actor '${ACTOR}' is not dependabot[bot] or renovate[bot]. Refusing to check out that ref rather than trust a caller-side actor gate that this workflow cannot see or verify."
           exit 1
 
       - uses: actions/checkout@v7
@@ -233,28 +242,36 @@ jobs:
   #
   # The policy and the reporter live in this repository, not in the one being scanned, so they are
   # checked out at the commit of this workflow file (see pr_compliance.yml for why job.workflow_sha
-  # and not github.workflow_sha). The tools are pinned to exact versions and installed outside the
-  # workspace; Dependabot does not track them, so bump them here by hand.
+  # and not github.workflow_sha). Both tools are pinned: nuget-license by version below, and the
+  # npm lister by tools/licence-checker/package-lock.json, installed with `npm ci --ignore-scripts`
+  # so its own dependencies cannot drift or run an install script. Dependabot tracks that directory;
+  # nuget-license has no manifest to track, so bump it here by hand.
+  #
+  # The package token is given to the restore and install steps only, and it is the read-only one
+  # whenever it exists: these jobs only read packages, and the steps that run the tools and the
+  # reporter (which run code from the scanned dependency graph's metadata) never see it.
   #
   # Exclusions are read from .licenceignore on the DEFAULT BRANCH through the API, never from the
   # checkout being scanned, for the same reason as .trufflehogignore above: a pull request could
-  # otherwise add `*` and hide its own findings from its own scan. A new entry takes effect once it
-  # is merged. One package per line, `*` is the wildcard, `name@version` pins one version, `#`
-  # starts a comment. Without the file nothing is excluded. Keep each entry as narrow as the package
-  # it covers and treat any new or edited entry in a pull request as review-relevant.
+  # otherwise add `*` and hide its own findings from its own scan. The API is asked without a ref, so
+  # it answers for the repository's default branch and a pushed tag or branch name cannot stand in
+  # for it. A new entry takes effect once it is merged. One package per line, `*` is the wildcard,
+  # `name@version` pins one version, `#` starts a comment. Without the file nothing is excluded.
+  # Keep each entry as narrow as the package it covers and treat any new or edited entry in a pull
+  # request as review-relevant.
   dotnet-licences:
     name: .NET licences
     if: inputs.licence-check && inputs.dotnet-solution != ''
     runs-on: ubuntu-latest
     continue-on-error: ${{ !inputs.licence-enforce }}
-    env:
-      GITHUB_PACKAGE_USER_NAME: github-actions
-      GITHUB_PACKAGE_TOKEN: ${{ (inputs.checkout-ref != '' && secrets.package-token-readonly) || secrets.package-token }}
     steps:
       - name: Refuse checkout-ref for anyone but an allow-listed bot
         if: ${{ inputs.checkout-ref != '' && github.actor != 'dependabot[bot]' && github.actor != 'renovate[bot]' }}
+        env:
+          CHECKOUT_REF: ${{ inputs.checkout-ref }}
+          ACTOR: ${{ github.actor }}
         run: |
-          echo "::error::checkout-ref was passed ('${{ inputs.checkout-ref }}') but actor '${{ github.actor }}' is not dependabot[bot] or renovate[bot]. Refusing to check out that ref rather than trust a caller-side actor gate that this workflow cannot see or verify."
+          echo "::error::checkout-ref was passed ('${CHECKOUT_REF}') but actor '${ACTOR}' is not dependabot[bot] or renovate[bot]. Refusing to check out that ref rather than trust a caller-side actor gate that this workflow cannot see or verify."
           exit 1
 
       - uses: actions/checkout@v7
@@ -271,6 +288,7 @@ jobs:
           sparse-checkout: |
             licence-policy
             scripts
+            tools
           persist-credentials: false
 
       - uses: actions/setup-dotnet@v6
@@ -285,24 +303,26 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           REPOSITORY: ${{ github.repository }}
-          DEFAULT_BRANCH: ${{ github.event.repository.default_branch || github.ref_name }}
         run: |
-          # The raw media type returns the file itself. 404 is the normal "no file" answer; any
-          # other failure is reported and treated as no exclusions, which can only add findings.
-          if gh api --method GET "repos/${REPOSITORY}/contents/.licenceignore" -f ref="${DEFAULT_BRANCH}" \
+          # No ref: the contents API then answers for the default branch. The raw media type returns
+          # the file itself. 404 is the normal "no file" answer; any other failure is reported and
+          # treated as no exclusions, which can only add findings.
+          if gh api --method GET "repos/${REPOSITORY}/contents/.licenceignore" \
               -H "Accept: application/vnd.github.raw" > "${RUNNER_TEMP}/licenceignore" 2> "${RUNNER_TEMP}/licenceignore.err"; then
-            echo "Excluding the packages listed in .licenceignore on ${DEFAULT_BRANCH}."
+            echo "Excluding the packages listed in .licenceignore on the default branch."
           else
             if ! grep -q "404" "${RUNNER_TEMP}/licenceignore.err"; then
-              echo "::warning::Could not read .licenceignore on ${DEFAULT_BRANCH}; excluding nothing."
+              echo "::warning::Could not read .licenceignore on the default branch; excluding nothing."
             else
-              echo "No .licenceignore on ${DEFAULT_BRANCH}; excluding nothing."
+              echo "No .licenceignore on the default branch; excluding nothing."
             fi
             : > "${RUNNER_TEMP}/licenceignore"
           fi
 
       - name: Restore
         env:
+          GITHUB_PACKAGE_USER_NAME: github-actions
+          GITHUB_PACKAGE_TOKEN: ${{ secrets.package-token-readonly || secrets.package-token }}
           SOLUTION: ${{ inputs.dotnet-solution }}
         run: dotnet restore "${SOLUTION}"
 
@@ -310,7 +330,18 @@ jobs:
         env:
           SOLUTION: ${{ inputs.dotnet-solution }}
         run: |
-          dotnet tool install nuget-license --version 4.0.18 --tool-path "${RUNNER_TEMP}/tools"
+          # The tool comes from nuget.org only, never from the caller's nuget.config, which lists
+          # private feeds and could name a feed that serves a different package of the same name.
+          cat > "${RUNNER_TEMP}/nuget.config" <<'EOF'
+          <?xml version="1.0" encoding="utf-8"?>
+          <configuration>
+            <packageSources>
+              <clear />
+              <add key="nuget.org" value="https://api.nuget.org/v3/index.json" />
+            </packageSources>
+          </configuration>
+          EOF
+          dotnet tool install nuget-license --version 4.0.18 --tool-path "${RUNNER_TEMP}/tools" --configfile "${RUNNER_TEMP}/nuget.config"
           # The tool's exit code is the number of packages it could not validate, and the listing is
           # complete either way: the verdict is made by the reporter below, from the policy file.
           # Passing the allowed list keeps the tool from dropping packages it cannot classify itself.
@@ -330,16 +361,14 @@ jobs:
     if: inputs.licence-check && inputs.node
     runs-on: ubuntu-latest
     continue-on-error: ${{ !inputs.licence-enforce }}
-    env:
-      # --ignore-scripts below already stops a malicious lockfile entry from running a postinstall
-      # hook against this token; the readonly split is still applied for defence in depth and
-      # consistency with the other jobs in this file.
-      GITHUB_PACKAGE_TOKEN: ${{ (inputs.checkout-ref != '' && secrets.package-token-readonly) || secrets.package-token }}
     steps:
       - name: Refuse checkout-ref for anyone but an allow-listed bot
         if: ${{ inputs.checkout-ref != '' && github.actor != 'dependabot[bot]' && github.actor != 'renovate[bot]' }}
+        env:
+          CHECKOUT_REF: ${{ inputs.checkout-ref }}
+          ACTOR: ${{ github.actor }}
         run: |
-          echo "::error::checkout-ref was passed ('${{ inputs.checkout-ref }}') but actor '${{ github.actor }}' is not dependabot[bot] or renovate[bot]. Refusing to check out that ref rather than trust a caller-side actor gate that this workflow cannot see or verify."
+          echo "::error::checkout-ref was passed ('${CHECKOUT_REF}') but actor '${ACTOR}' is not dependabot[bot] or renovate[bot]. Refusing to check out that ref rather than trust a caller-side actor gate that this workflow cannot see or verify."
           exit 1
 
       - uses: actions/checkout@v7
@@ -356,6 +385,7 @@ jobs:
           sparse-checkout: |
             licence-policy
             scripts
+            tools
           persist-credentials: false
 
       # No `cache: yarn`, same reason as the npm dependencies job above (#153).
@@ -367,32 +397,47 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           REPOSITORY: ${{ github.repository }}
-          DEFAULT_BRANCH: ${{ github.event.repository.default_branch || github.ref_name }}
         run: |
-          # The raw media type returns the file itself. 404 is the normal "no file" answer; any
-          # other failure is reported and treated as no exclusions, which can only add findings.
-          if gh api --method GET "repos/${REPOSITORY}/contents/.licenceignore" -f ref="${DEFAULT_BRANCH}" \
+          # No ref: the contents API then answers for the default branch. The raw media type returns
+          # the file itself. 404 is the normal "no file" answer; any other failure is reported and
+          # treated as no exclusions, which can only add findings.
+          if gh api --method GET "repos/${REPOSITORY}/contents/.licenceignore" \
               -H "Accept: application/vnd.github.raw" > "${RUNNER_TEMP}/licenceignore" 2> "${RUNNER_TEMP}/licenceignore.err"; then
-            echo "Excluding the packages listed in .licenceignore on ${DEFAULT_BRANCH}."
+            echo "Excluding the packages listed in .licenceignore on the default branch."
           else
             if ! grep -q "404" "${RUNNER_TEMP}/licenceignore.err"; then
-              echo "::warning::Could not read .licenceignore on ${DEFAULT_BRANCH}; excluding nothing."
+              echo "::warning::Could not read .licenceignore on the default branch; excluding nothing."
             else
-              echo "No .licenceignore on ${DEFAULT_BRANCH}; excluding nothing."
+              echo "No .licenceignore on the default branch; excluding nothing."
             fi
             : > "${RUNNER_TEMP}/licenceignore"
           fi
 
       - name: Install without running scripts
+        env:
+          GITHUB_PACKAGE_TOKEN: ${{ secrets.package-token-readonly || secrets.package-token }}
         run: yarn install --frozen-lockfile --ignore-scripts
 
-      # Only the production dependencies: what ships is what the licences bind. A private workspace
-      # package is the repository's own code and is left out.
+      # The lister's dependencies come from its own lockfile (npm ci), with no install scripts and no
+      # token in the environment.
+      #
+      # A repository with a single package.json lists only its production dependencies: what ships is
+      # what the licences bind. A yarn workspace lists everything that is installed instead, because
+      # license-checker's --production reads only the ROOT package.json, and a workspace root usually
+      # lists none of the packages its apps use (checked on EasyLife365-Identity: the root listing
+      # missed recharts, file-saver, jszip, papaparse and the other packages only the apps depend on).
+      # The price is that development tooling is checked too. Private workspace packages are the
+      # repository's own code and are left out either way.
       - name: List the licences
         run: |
-          npm install --prefix "${RUNNER_TEMP}/tools" --ignore-scripts --no-audit --no-fund --save-exact license-checker-rseidelsohn@5.0.1
-          node "${RUNNER_TEMP}/tools/node_modules/license-checker-rseidelsohn/bin/license-checker-rseidelsohn.js" \
-            --production --excludePrivatePackages --json --out "${RUNNER_TEMP}/licences.json" || echo "license-checker exited with $?"
+          npm ci --ignore-scripts --no-audit --no-fund --prefix ./.easylife-workflows/tools/licence-checker
+          scope="--production"
+          if node -e 'process.exit(require("./package.json").workspaces ? 0 : 1)'; then
+            scope=""
+          fi
+          # shellcheck disable=SC2086
+          node ./.easylife-workflows/tools/licence-checker/node_modules/license-checker-rseidelsohn/bin/license-checker-rseidelsohn.js \
+            ${scope} --excludePrivatePackages --json --out "${RUNNER_TEMP}/licences.json" || echo "license-checker exited with $?"
 
       - name: Report
         env:
