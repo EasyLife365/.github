@@ -52,12 +52,13 @@ jobs:
       package-token: ${{ secrets.PACKAGE_TOKEN }}
 ```
 
-The npm mode runs `npm ci --ignore-scripts` (the lockfile exactly, and no install script ever sees the
-package token) and then `npm audit --audit-level=high --omit=dev`: like the yarn mode, only **High or
-Critical advisories in production dependencies fail**; development dependencies and anything below High do
-not. `npm audit` also exits non-zero when the advisory service cannot be reached, so an outage fails the
-job instead of passing unchecked. The npm mode uses the same token handling as the yarn mode (the
-read-only token whenever `checkout-ref` is set, no cache). Not covered: a repository with several
+The npm mode runs `npm ci --ignore-scripts --allow-git=none` (the lockfile exactly; no install script and,
+on npm 11.10 or later, no git dependency runs while the package token is in reach) and then
+`npm audit --audit-level=high --omit=dev`: as in the yarn mode, only **High or Critical advisories in
+production dependencies fail**; development dependencies and anything below High do not. The two differ
+when the advisory service cannot be reached: `npm audit` exits non-zero, so the job fails, whereas the yarn
+mode lets that pass. A rerun clears a transient outage. The token handling is the same as in the yarn mode
+(the read-only token whenever `checkout-ref` is set in the advisory job, no cache). Not covered: a repository with several
 lockfiles in several folders needs one call per folder.
 
 **The licence check reports first.** By default it only reports: findings are warnings, a summary on the

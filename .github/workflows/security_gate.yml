@@ -269,10 +269,12 @@ jobs:
           fi
 
       # npm ci installs exactly package-lock.json and fails when package.json disagrees with it.
+      # --ignore-scripts alone does not stop npm running code from a git dependency, so --allow-git=none
+      # refuses those too (npm 11.10 or later; an older npm only warns about the unknown flag).
       - name: Install without running scripts (npm)
         if: inputs.node-package-manager == 'npm'
         working-directory: ${{ inputs.node-working-directory }}
-        run: npm ci --ignore-scripts --no-audit --no-fund
+        run: npm ci --ignore-scripts --allow-git=none --no-audit --no-fund
 
       # The same rule as the yarn audit: High or Critical in production dependencies fail, dev-only
       # advisories and anything below High do not. npm audit exits 1 when it finds one at or above the
@@ -482,15 +484,15 @@ jobs:
         working-directory: ${{ inputs.node-working-directory }}
         env:
           GITHUB_PACKAGE_TOKEN: ${{ secrets.package-token-readonly || secrets.package-token }}
-        run: npm ci --ignore-scripts --no-audit --no-fund
+        run: npm ci --ignore-scripts --allow-git=none --no-audit --no-fund
 
       # The lister's dependencies come from its own lockfile (npm ci), with no install scripts and no
       # token in the environment.
       #
       # A repository with a single package.json lists only its production dependencies: what ships is
       # what the licences bind, for yarn and npm alike. A workspace (yarn or npm) lists everything that is
-      # installed instead, because
-      # license-checker's --production reads only the ROOT package.json, and a workspace root usually
+      # installed instead, because license-checker's --production reads only the ROOT package.json, and a
+      # workspace root usually
       # lists none of the packages its apps use (checked on EasyLife365-Identity: the root listing
       # missed recharts, file-saver, jszip, papaparse and the other packages only the apps depend on).
       # The price is that development tooling is checked too. Private workspace packages are the
@@ -510,7 +512,7 @@ jobs:
           npm ci --ignore-scripts --no-audit --no-fund --prefix "${RUNNER_TEMP}/licence-checker" \
             || echo "::warning::Could not install the licence lister; the listing will be missing."
           # The lister reads the node_modules of the folder it runs in.
-          cd "${NODE_DIRECTORY}"
+          cd -- "${NODE_DIRECTORY}"
           scope="--production"
           if node -e 'process.exit(require("./package.json").workspaces ? 0 : 1)'; then
             scope=""
