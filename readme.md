@@ -16,6 +16,7 @@ Every repository calls these rather than copying the steps, so a fix lands once.
 | `ci_dotnet.yml` | Restore, build, and test a .NET solution. Accepts a caller-supplied `checkout-ref` for Dependabot/Renovate PRs; carries no `id-token: write` and no Azure sign-in capability by design |
 | `ci_dotnet_azure.yml` | Same, plus Azure OIDC sign-in for fixtures that resolve `@Microsoft.KeyVault(...)` references. Never accepts `checkout-ref` -- for a repository's trusted (non-Dependabot) PR lane only |
 | `ci_react_build.yml`, `ci_react_unit_tests.yml`, `ci_react_publish.yml`, `ci_react_storybook_tests.yml` | The React library pipeline |
+| `security_gate.yml` | Secret scan, dependency advisories and dependency licence checks for .NET and npm; see "Security gate" below |
 | `ci_wcag_check.yml` | Accessibility check that blocks merge in React Components |
 | `spa_build.yml`, `spa_deploy.yml` | Build and deploy a single-page app |
 | `release_nuget_packages.yml` | Publish NuGet packages |
@@ -24,6 +25,72 @@ Every repository calls these rather than copying the steps, so a fix lands once.
 | **`pr_compliance.yml`** | **Deterministic pull request checks — the facts** |
 | **`pr_code_review.yml`** | **The EasyLife 365 review standard, run on the pull request — the judgement** |
 | **`pr_agent_review.yml`** | **Verifies a Claude review exists for the pull request — the gate** |
+
+### Security gate
+
+`security_gate.yml` runs a TruffleHog secret scan, a Critical/High advisory check for the .NET solution
+and the yarn workspace, and a **licence check** of the same dependencies. Callers pass `dotnet-solution`
+and/or `node: true`; the licence jobs run for whichever of those is set.
+
+**The licence check reports first.** By default it only reports: findings are warnings, a summary on the
+run page, and the job never fails. A caller opts in to failing with `licence-enforce: true`, and out of
+the check altogether with `licence-check: false`. Existing callers need no change.
+
+**The policy is `licence-policy/policy.json`** in this repository, and changing it is a reviewed pull
+request. Every package gets one of four outcomes:
+
+| Outcome | Meaning | Fails when enforcing |
+|---|---|---|
+| Allowed | Every licence that applies is on `allowed` (MIT, MIT-0, Apache-2.0, BSD-2-Clause, BSD-3-Clause, ISC, 0BSD, Unlicense, CC0-1.0, MS-PL, Zlib, BlueOak-1.0.0, Python-2.0) | no |
+| Needs review | A real SPDX licence on neither list (MPL-2.0, CC-BY-4.0, EPL-2.0, ...), or an npm licence guessed from a file | no, listed only |
+| Unknown | No licence, a URL or file name instead of an SPDX id, `Custom: ...`, `UNLICENSED`, an expression that does not parse | no, listed and warned about |
+| Forbidden | Matches `forbidden`: GPL, AGPL, LGPL, SSPL, EUPL, OSL, BUSL, CC-BY-NC, CC-BY-ND, Commons-Clause | **yes** |
+
+**Only a forbidden licence fails the gate**, and only when a caller sets `licence-enforce: true`. An
+unknown licence is accepted: it is listed in the job summary and raised as a warning so someone can
+look, but it never blocks a pull request. A scan that did not run is different from an unknown
+licence: a missing, unreadable or empty listing means the check checked nothing, so it warns when
+reporting and fails when enforcing.
+
+SPDX expressions are evaluated, not text-matched: `MIT OR GPL-3.0-only` is allowed (the consumer picks
+MIT), `MIT AND CC-BY-4.0` needs review (both apply), and a `WITH` exception never rescues a forbidden
+licence. Our own packages (`ownPackages`, matched case-sensitively: `@easylife365/*` and the published
+`EL.Core.*`, `EL.Storage.*`, `EL.Cache.*`, `EL.Serialization.*`, `EL.Approvals.*`, `EL.Notification.*`,
+`EL.EasyHub.*` families) are not checked.
+
+**Excluding a reviewed package** is optional bookkeeping, not a way to get a green run: unknown licences
+do not fail the gate, so nothing has to be excluded to pass. An exclusion records that someone looked
+at a package, and takes it off the warning list. It goes in `.licenceignore` at the root of the caller
+repository, read from its **default branch** (never from the pull request being checked, so a pull request cannot hide its own
+findings; an entry takes effect once merged). One package per line, `*` is the wildcard, `name@version`
+pins a single version, `#` starts a comment. Say why in the comment. Keep entries narrow:
+`Microsoft.AspNetCore.*` is a decision about a family, `*` is a decision about everything. A package
+that is excluded but whose current licence is forbidden still raises a warning, because a new version
+can change the licence.
+
+**Tools**, both pinned:
+- [nuget-license](https://github.com/sensslen/nuget-license) 4.0.18 for .NET (the whole graph, transitive
+  included), pinned by version in the workflow and installed from nuget.org only. It has no manifest
+  for Dependabot to track, so bump it by hand.
+- [license-checker-rseidelsohn](https://github.com/RSeidelsohn/license-checker-rseidelsohn) 5.0.1 for npm,
+  pinned by `tools/licence-checker/package-lock.json` in this repository and installed with
+  `npm ci --ignore-scripts`, so its own dependencies cannot drift or run a script. Dependabot tracks that
+  directory. A repository with one `package.json` is listed for production dependencies only. A yarn
+  workspace is listed for everything installed, development tooling included, because the tool's
+  `--production` reads only the root manifest and would miss packages only the workspace apps use.
+
+`scripts/licence-report.mjs` classifies their output and writes the report; `scripts/lib/licence-policy.test.mjs`
+and `scripts/lib/licence-report.test.mjs` test it, against output trimmed from real runs.
+
+**Accepted risk.** The check inspects the pull request's own dependency graph, and the code of a pull
+request from the same repository runs before the report step in the same job (project targets during
+restore, a `yarn-path` setting). An author with write access can therefore influence the verdict, in
+report-only mode and when enforcing alike. The check protects against honest mistakes, an AI assistant
+pulling in an incompatible dependency, and licence changes upstream; it is not a control against a hostile
+author. What a pull request cannot do: edit the exclusion list (it is read from the default branch), reach
+the package token from the tool and report steps (it is given to restore and install only), or change the
+policy, reporter and lister lockfile, which come from this repository at the workflow's own commit. The
+lister runs under Node 24 from a copy outside the scanned workspace.
 
 ### Versioning
 
