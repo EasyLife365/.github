@@ -29,8 +29,36 @@ Every repository calls these rather than copying the steps, so a fix lands once.
 ### Security gate
 
 `security_gate.yml` runs a TruffleHog secret scan, a Critical/High advisory check for the .NET solution
-and the yarn workspace, and a **licence check** of the same dependencies. Callers pass `dotnet-solution`
-and/or `node: true`; the licence jobs run for whichever of those is set.
+and the npm dependencies (yarn or npm), and a **licence check** of the same dependencies. Callers pass
+`dotnet-solution` and/or `node: true`; the licence jobs run for whichever of those is set.
+
+**yarn or npm.** `node: true` audits a yarn project by default, exactly as before. A repository whose
+lockfile is `package-lock.json` (no `yarn.lock`) sets `node-package-manager: npm`. It is an explicit
+input, not detected from the lockfile: a repository that has both files, or one that switches
+tools, never changes what the gate checks by accident, and a typo fails the job instead of falling back
+to yarn. A project whose lockfile is in a subfolder (a frontend next to a backend) sets
+`node-working-directory` to that folder; it defaults to the repository root and applies to both package
+managers.
+
+```yaml
+jobs:
+  call-security:
+    uses: EasyLife365/.github/.github/workflows/security_gate.yml@main
+    with:
+      node: true
+      node-package-manager: npm
+      node-working-directory: EL.Onboarding   # omit when package-lock.json is at the root
+    secrets:
+      package-token: ${{ secrets.PACKAGE_TOKEN }}
+```
+
+The npm mode runs `npm ci --ignore-scripts` (the lockfile exactly, and no install script ever sees the
+package token) and then `npm audit --audit-level=high --omit=dev`: like the yarn mode, only **High or
+Critical advisories in production dependencies fail**; development dependencies and anything below High do
+not. `npm audit` also exits non-zero when the advisory service cannot be reached, so an outage fails the
+job instead of passing unchecked. The npm mode uses the same token handling as the yarn mode (the
+read-only token whenever `checkout-ref` is set, no cache). Not covered: a repository with several
+lockfiles in several folders needs one call per folder.
 
 **The licence check reports first.** By default it only reports: findings are warnings, a summary on the
 run page, and the job never fails. A caller opts in to failing with `licence-enforce: true`, and out of
@@ -75,9 +103,11 @@ can change the licence.
 - [license-checker-rseidelsohn](https://github.com/RSeidelsohn/license-checker-rseidelsohn) 5.0.1 for npm,
   pinned by `tools/licence-checker/package-lock.json` in this repository and installed with
   `npm ci --ignore-scripts`, so its own dependencies cannot drift or run a script. Dependabot tracks that
-  directory. A repository with one `package.json` is listed for production dependencies only. A yarn
-  workspace is listed for everything installed, development tooling included, because the tool's
-  `--production` reads only the root manifest and would miss packages only the workspace apps use.
+  directory. It lists the installed `node_modules`, so it works the same for a yarn and an npm install. A
+  repository with one `package.json` is listed for production dependencies only. A workspace (yarn or npm,
+  detected by `workspaces` in the root `package.json`) is listed for everything installed, development
+  tooling included, because the tool's `--production` reads only the root manifest and would miss packages
+  only the workspace apps use. Committed build output (a `dist/` folder) is not read: only `node_modules` is.
 
 `scripts/licence-report.mjs` classifies their output and writes the report; `scripts/lib/licence-policy.test.mjs`
 and `scripts/lib/licence-report.test.mjs` test it, against output trimmed from real runs.
