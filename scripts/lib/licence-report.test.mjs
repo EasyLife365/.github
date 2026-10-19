@@ -66,6 +66,14 @@ test('forbidden next to unknown still fails once, on the forbidden one', () => {
   assert.match(r.out, /::error title=Licence check::bad@1\.0\.0/);
 });
 
+test('an excluded unknown package is counted as excluded and no longer warned about', () => {
+  const r = run('npm', npm({ 'u@1.0.0': 'UNKNOWN' }), { enforce: true, ignore: '# reviewed\nu\n' });
+  assert.equal(r.code, 0);
+  assert.ok(!r.out.includes('::warning'));
+  assert.match(r.summary, /Excluded .* \| 1/);
+  assert.match(r.summary, /Unknown \| 0/);
+});
+
 test('an exclusion removes the finding, and the summary counts it', () => {
   const r = run('npm', npm({ 'x@1.0.0': 'GPL-3.0' }), { enforce: true, ignore: '# reviewed\nx\n' });
   assert.equal(r.code, 0);

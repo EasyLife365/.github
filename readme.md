@@ -60,8 +60,8 @@ licence. Our own packages (`ownPackages`, matched case-sensitively: `@easylife36
 
 **Excluding a reviewed package** is optional bookkeeping, not a way to get a green run: unknown licences
 do not fail the gate, so nothing has to be excluded to pass. An exclusion records that someone looked
-at a package, and takes it off the warning list. It goes in `.licenceignore` at the root of the caller repository, read from
-its **default branch** (never from the pull request being checked, so a pull request cannot hide its own
+at a package, and takes it off the warning list. It goes in `.licenceignore` at the root of the caller
+repository, read from its **default branch** (never from the pull request being checked, so a pull request cannot hide its own
 findings; an entry takes effect once merged). One package per line, `*` is the wildcard, `name@version`
 pins a single version, `#` starts a comment. Say why in the comment. Keep entries narrow:
 `Microsoft.AspNetCore.*` is a decision about a family, `*` is a decision about everything. A package
