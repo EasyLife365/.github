@@ -75,12 +75,15 @@ can change the licence.
 `scripts/licence-report.mjs` classifies their output and writes the report; `scripts/lib/licence-policy.test.mjs`
 and `scripts/lib/licence-report.test.mjs` test it, against output trimmed from real runs.
 
-**Accepted risk while the check only reports.** The check inspects the pull request's own dependency
-graph, so a hostile pull request author can change the listing, and only a check that enforces can stop
-that. In report-only mode the licence jobs are advice, not a control. The exclusion list cannot be edited
-by the pull request being checked (it is read from the default branch), the package token reaches only the
-restore and install steps, and the policy, reporter and tool lockfile come from this repository at the
-workflow's own commit, not from the pull request.
+**Accepted risk.** The check inspects the pull request's own dependency graph, and the code of a pull
+request from the same repository runs before the report step in the same job (project targets during
+restore, a `yarn-path` setting). An author with write access can therefore influence the verdict, in
+report-only mode and when enforcing alike. The check protects against honest mistakes, an AI assistant
+pulling in an incompatible dependency, and licence changes upstream; it is not a control against a hostile
+author. What a pull request cannot do: edit the exclusion list (it is read from the default branch), reach
+the package token from the tool and report steps (it is given to restore and install only), or change the
+policy, reporter and lister lockfile, which come from this repository at the workflow's own commit. The
+lister runs under Node 24 from a copy outside the scanned workspace.
 
 ### Versioning
 

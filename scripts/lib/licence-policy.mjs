@@ -21,7 +21,8 @@ const BY_RANK = Object.keys(RANK);
 /**
  * `*` is the only wildcard; everything else is literal. Case-insensitive unless asked otherwise:
  * licence ids and package names are matched loosely, own-package prefixes exactly. Consecutive
- * stars collapse to one so a hostile entry cannot build a backtracking pattern.
+ * stars collapse to one. A pattern with many separate stars can still match slowly on a very long
+ * id; entries reach this code only after review on the default branch, which is the control.
  */
 export function globToRegExp(glob, caseSensitive = false) {
   const body = glob.replace(/\*+/g, '*').split('*').map((part) => part.replace(/[.+?^${}()|[\]\\/]/g, '\\$&')).join('.*');

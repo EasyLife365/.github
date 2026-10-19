@@ -32,6 +32,9 @@ updates:
     schedule:
       interval: "weekly"
       day: "monday"
+    # A new release waits a week before it is proposed: this lockfile runs in every caller.
+    cooldown:
+      default-days: 7
     open-pull-requests-limit: 5
     labels:
       - "dependencies"
