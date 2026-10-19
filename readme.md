@@ -43,17 +43,24 @@ request. Every package gets one of four outcomes:
 |---|---|---|
 | Allowed | Every licence that applies is on `allowed` (MIT, MIT-0, Apache-2.0, BSD-2-Clause, BSD-3-Clause, ISC, 0BSD, Unlicense, CC0-1.0, MS-PL, Zlib, BlueOak-1.0.0, Python-2.0) | no |
 | Needs review | A real SPDX licence on neither list (MPL-2.0, CC-BY-4.0, EPL-2.0, ...), or an npm licence guessed from a file | no, listed only |
-| Unknown | No licence, a URL or file name instead of an SPDX id, `Custom: ...`, `UNLICENSED`, an expression that does not parse | **yes** |
+| Unknown | No licence, a URL or file name instead of an SPDX id, `Custom: ...`, `UNLICENSED`, an expression that does not parse | no, listed and warned about |
 | Forbidden | Matches `forbidden`: GPL, AGPL, LGPL, SSPL, EUPL, OSL, BUSL, CC-BY-NC, CC-BY-ND, Commons-Clause | **yes** |
+
+**Only a forbidden licence fails the gate**, and only when a caller sets `licence-enforce: true`. An
+unknown licence is accepted: it is listed in the job summary and raised as a warning so someone can
+look, but it never blocks a pull request. A scan that did not run is different from an unknown
+licence: a missing, unreadable or empty listing means the check checked nothing, so it warns when
+reporting and fails when enforcing.
 
 SPDX expressions are evaluated, not text-matched: `MIT OR GPL-3.0-only` is allowed (the consumer picks
 MIT), `MIT AND CC-BY-4.0` needs review (both apply), and a `WITH` exception never rescues a forbidden
 licence. Our own packages (`ownPackages`, matched case-sensitively: `@easylife365/*` and the published
 `EL.Core.*`, `EL.Storage.*`, `EL.Cache.*`, `EL.Serialization.*`, `EL.Approvals.*`, `EL.Notification.*`,
-`EL.EasyHub.*` families) are not checked. An empty listing is never a clean result: it warns, and fails
-when enforcing.
+`EL.EasyHub.*` families) are not checked.
 
-**Excluding a reviewed package** goes in `.licenceignore` at the root of the caller repository, read from
+**Excluding a reviewed package** is optional bookkeeping, not a way to get a green run: unknown licences
+do not fail the gate, so nothing has to be excluded to pass. An exclusion records that someone looked
+at a package, and takes it off the warning list. It goes in `.licenceignore` at the root of the caller repository, read from
 its **default branch** (never from the pull request being checked, so a pull request cannot hide its own
 findings; an entry takes effect once merged). One package per line, `*` is the wildcard, `name@version`
 pins a single version, `#` starts a comment. Say why in the comment. Keep entries narrow:

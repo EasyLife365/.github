@@ -44,18 +44,30 @@ test('a forbidden licence exits 0 when reporting and 1 when enforcing', () => {
   assert.match(enforced.summary, /Forbidden \| 1/);
 });
 
-test('an unknown licence fails when enforcing, needs-review does not', () => {
-  assert.equal(run('npm', npm({ 'u@1.0.0': 'UNKNOWN' }), { enforce: true }).code, 1);
+test('unknown and needs-review licences never fail, even when enforcing', () => {
+  const unknown = run('npm', npm({ 'u@1.0.0': 'UNKNOWN' }), { enforce: true });
+  assert.equal(unknown.code, 0);
+  assert.match(unknown.out, /::warning title=Licence check::u@1\.0\.0: UNKNOWN \(unknown, not enforced\)/);
+  assert.ok(!unknown.out.includes('::error'));
+  assert.match(unknown.summary, /Unknown \| 1/);
   assert.equal(run('npm', npm({ 'm@1.0.0': 'MPL-2.0' }), { enforce: true }).code, 0);
 });
 
-test('an unlicensed NuGet package (no License key) fails when enforcing', () => {
+test('an unlicensed NuGet package (no License key) is warned about, not failed', () => {
   const nuget = [{ PackageId: 'diskann-garnet', PackageVersion: '5.0.3', ValidationErrors: [{ Error: 'No license information found' }] }];
-  assert.equal(run('dotnet', nuget, { enforce: true }).code, 1);
+  const r = run('dotnet', nuget, { enforce: true });
+  assert.equal(r.code, 0);
+  assert.match(r.out, /::warning title=Licence check::diskann-garnet@5\.0\.3: no licence information/);
+});
+
+test('forbidden next to unknown still fails once, on the forbidden one', () => {
+  const r = run('npm', npm({ 'u@1.0.0': 'UNKNOWN', 'bad@1.0.0': 'AGPL-3.0' }), { enforce: true });
+  assert.equal(r.code, 1);
+  assert.match(r.out, /::error title=Licence check::bad@1\.0\.0/);
 });
 
 test('an exclusion removes the finding, and the summary counts it', () => {
-  const r = run('npm', npm({ 'u@1.0.0': 'UNKNOWN' }), { enforce: true, ignore: '# reviewed\nu\n' });
+  const r = run('npm', npm({ 'x@1.0.0': 'GPL-3.0' }), { enforce: true, ignore: '# reviewed\nx\n' });
   assert.equal(r.code, 0);
   assert.match(r.summary, /Excluded .* \| 1/);
 });

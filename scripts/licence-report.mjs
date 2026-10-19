@@ -7,15 +7,17 @@
  * package against licence-policy/policy.json (scripts/lib/licence-policy.mjs) and writes
  *
  *   1. a Markdown report to $GITHUB_STEP_SUMMARY, which appears on the run page itself
- *   2. one annotation per forbidden or unknown package (the first 20), so they show on the run
+ *   2. one annotation per forbidden or unknown package (the first 20 of each), so they show on the run
  *   3. the same counts on stdout
  *
  * Usage:  node licence-report.mjs --ecosystem dotnet|npm --input <listing.json> --policy <policy.json>
  *                                 [--ignore <exclusions>] [--enforce true|false] [--title "..."]
  *
  * Report-only unless --enforce true: findings are then ::warning:: and the exit code is 0. With
- * --enforce true a forbidden or unknown licence is an ::error:: and the exit code is 1. Packages that
- * need review (a real licence that is on neither list) are listed in both modes and never fail.
+ * --enforce true a forbidden licence is an ::error:: and the exit code is 1. Unknown licences (none,
+ * a URL, a file name) and packages that need review (a real licence on neither list) are listed in
+ * both modes as warnings or in the summary, and never fail. A listing that is missing, unreadable or
+ * empty is a broken scan, not an unknown licence, and does fail when enforcing.
  *
  * Package names and licence strings come from third-party metadata, so everything printed is
  * escaped: workflow-command characters in annotations, Markdown and HTML in the summary table.
@@ -77,11 +79,14 @@ const policy = loadPolicy(JSON.parse(readFileSync(policyPath, 'utf8')));
 const ignore = ignorePath && existsSync(ignorePath) ? parseIgnore(readFileSync(ignorePath, 'utf8')) : [];
 const r = assess(packages, policy, ignore);
 
-const failing = r.forbidden.length + r.unknown.length;
+// Only a forbidden licence fails the job. An unknown one (no licence, a URL, a file name) is listed
+// and warned about but accepted: nobody can tell what it permits, which is a reason to look, not
+// a reason to block a pull request.
+const failing = r.forbidden.length;
 const level = enforce ? 'error' : 'warning';
 
 const lines = [`### ${title}`, ''];
-lines.push(enforce ? '_Enforced: forbidden and unknown licences fail this job._' : '_Report only: findings do not fail this job._', '');
+lines.push(enforce ? '_Enforced: a forbidden licence fails this job. Unknown licences are listed and warned about only._' : '_Report only: findings do not fail this job._', '');
 lines.push('| Outcome | Packages |', '|---|---:|');
 lines.push(`| Allowed | ${r.allowed.length} |`);
 lines.push(`| Needs review | ${r['needs-review'].length} |`);
@@ -98,22 +103,28 @@ for (const [key, heading] of [['forbidden', 'Forbidden'], ['excludedForbidden', 
   if (list.length > MAX_ROWS) lines.push(`| ... ${list.length - MAX_ROWS} more | | |`);
   lines.push('');
 }
-if (failing > 0) {
-  lines.push('To accept a package after review, add its name (or `name@version`) to `.licenceignore` on the default branch, with a comment saying why.', '');
+if (r.forbidden.length + r.unknown.length > 0) {
+  lines.push('To record a package as reviewed, add its name (or `name@version`) to `.licenceignore` on the default branch, with a comment saying why. A forbidden licence is the only finding that fails an enforcing job.', '');
 }
 
 const report = lines.join('\n');
 console.log(report);
 if (process.env.GITHUB_STEP_SUMMARY) appendFileSync(process.env.GITHUB_STEP_SUMMARY, `${report}\n`);
 
-for (const p of [...r.forbidden, ...r.unknown].slice(0, MAX_ANNOTATIONS)) {
-  annotate(level, `${p.id}@${p.version}: ${p.licence ?? 'no licence information'}`);
+for (const p of r.forbidden.slice(0, MAX_ANNOTATIONS)) {
+  annotate(level, `${p.id}@${p.version}: ${p.licence}`);
+}
+for (const p of r.unknown.slice(0, MAX_ANNOTATIONS)) {
+  annotate('warning', `${p.id}@${p.version}: ${p.licence ?? 'no licence information'} (unknown, not enforced)`);
 }
 for (const p of r.excludedForbidden.slice(0, MAX_ANNOTATIONS)) {
   annotate('warning', `${p.id}@${p.version} is excluded in .licenceignore but its licence is now ${p.licence}; review the exclusion.`);
 }
-if (failing > 0) {
-  annotate(level, `${title}: ${r.forbidden.length} forbidden and ${r.unknown.length} unknown licences (${r['needs-review'].length} more need review).`);
+if (r.forbidden.length > 0) {
+  annotate(level, `${title}: ${r.forbidden.length} forbidden licences.`);
+}
+if (r.unknown.length > 0) {
+  annotate('warning', `${title}: ${r.unknown.length} unknown licences, listed in the summary (${r['needs-review'].length} more need review).`);
 }
 
 process.exit(enforce && failing > 0 ? 1 : 0);

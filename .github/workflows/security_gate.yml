@@ -28,8 +28,8 @@ name: Security gate
 #
 # The licence checks run whenever dotnet-solution is set or node is true, and REPORT ONLY: findings
 # appear as warnings and in the job summary, and never fail the gate. Pass `licence-enforce: true` to
-# fail on forbidden and unknown licences, or `licence-check: false` to skip them. Packages that were
-# reviewed and accepted are listed in .licenceignore on the repository's default branch. The policy
+# fail on forbidden licences (unknown ones are only warned about), or `licence-check: false` to skip
+# them. Packages that were reviewed can be listed in .licenceignore on the default branch. The policy
 # and the format of that file are described in the "Security gate" section of this repository's readme.
 #
 # Stage 0a of the upgrade plan introduces it as a visible check; Stage 2 makes it required.
@@ -66,7 +66,7 @@ on:
         type: boolean
         default: true
       licence-enforce:
-        description: Fail the licence jobs on forbidden and unknown licences. By default they only report (warnings and the job summary).
+        description: Fail the licence jobs on a forbidden licence, or when the scan produced no listing. Unknown licences only warn. By default the jobs only report (warnings and the job summary).
         required: false
         type: boolean
         default: false
