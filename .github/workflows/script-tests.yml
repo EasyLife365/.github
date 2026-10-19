@@ -7,6 +7,7 @@ on:
   pull_request:
     paths:
       - 'scripts/**'
+      - 'licence-policy/**'
       - '.github/workflows/script-tests.yml'
 
 permissions:
@@ -22,4 +23,4 @@ jobs:
           persist-credentials: false
 
       - name: Run script unit tests
-        run: node --test scripts/lib/dependency-only.test.mjs
+        run: node --test scripts/lib/dependency-only.test.mjs scripts/lib/licence-policy.test.mjs

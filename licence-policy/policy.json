@@ -1,0 +1,33 @@
+{
+  "allowed": [
+    "MIT",
+    "MIT-0",
+    "Apache-2.0",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "ISC",
+    "0BSD",
+    "Unlicense",
+    "CC0-1.0",
+    "MS-PL",
+    "Zlib",
+    "BlueOak-1.0.0",
+    "Python-2.0"
+  ],
+  "forbidden": [
+    "GPL-*",
+    "AGPL-*",
+    "LGPL-*",
+    "SSPL-*",
+    "EUPL-*",
+    "OSL-*",
+    "BUSL-*",
+    "CC-BY-NC*",
+    "CC-BY-ND*",
+    "Commons-Clause*"
+  ],
+  "ownPackages": [
+    "@easylife365/*",
+    "EL.*"
+  ]
+}

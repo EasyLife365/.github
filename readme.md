@@ -16,6 +16,7 @@ Every repository calls these rather than copying the steps, so a fix lands once.
 | `ci_dotnet.yml` | Restore, build, and test a .NET solution. Accepts a caller-supplied `checkout-ref` for Dependabot/Renovate PRs; carries no `id-token: write` and no Azure sign-in capability by design |
 | `ci_dotnet_azure.yml` | Same, plus Azure OIDC sign-in for fixtures that resolve `@Microsoft.KeyVault(...)` references. Never accepts `checkout-ref` -- for a repository's trusted (non-Dependabot) PR lane only |
 | `ci_react_build.yml`, `ci_react_unit_tests.yml`, `ci_react_publish.yml`, `ci_react_storybook_tests.yml` | The React library pipeline |
+| `security_gate.yml` | Secret scan, dependency advisories and dependency licence checks for .NET and npm; see "Security gate" below |
 | `ci_wcag_check.yml` | Accessibility check that blocks merge in React Components |
 | `spa_build.yml`, `spa_deploy.yml` | Build and deploy a single-page app |
 | `release_nuget_packages.yml` | Publish NuGet packages |
@@ -24,6 +25,42 @@ Every repository calls these rather than copying the steps, so a fix lands once.
 | **`pr_compliance.yml`** | **Deterministic pull request checks — the facts** |
 | **`pr_code_review.yml`** | **The EasyLife 365 review standard, run on the pull request — the judgement** |
 | **`pr_agent_review.yml`** | **Verifies a Claude review exists for the pull request — the gate** |
+
+### Security gate
+
+`security_gate.yml` runs a TruffleHog secret scan, a Critical/High advisory check for the .NET solution
+and the yarn workspace, and a **licence check** of the same dependencies. Callers pass `dotnet-solution`
+and/or `node: true`; the licence jobs run for whichever of those is set.
+
+**The licence check reports first.** By default it only reports: findings are warnings, a summary on the
+run page, and the job never fails. A caller opts in to failing with `licence-enforce: true`, and out of
+the check altogether with `licence-check: false`. Existing callers need no change.
+
+**The policy is `licence-policy/policy.json`** in this repository, and changing it is a reviewed pull
+request. Every package gets one of four outcomes:
+
+| Outcome | Meaning | Fails when enforcing |
+|---|---|---|
+| Allowed | Every licence that applies is on `allowed` (MIT, MIT-0, Apache-2.0, BSD-2-Clause, BSD-3-Clause, ISC, 0BSD, Unlicense, CC0-1.0, MS-PL, Zlib, BlueOak-1.0.0, Python-2.0) | no |
+| Needs review | A real SPDX licence on neither list (MPL-2.0, CC-BY-4.0, EPL-2.0, ...), or an npm licence guessed from a file | no, listed only |
+| Unknown | No licence, a URL or file name instead of an SPDX id, `Custom: ...`, `UNLICENSED`, an expression that does not parse | **yes** |
+| Forbidden | Matches `forbidden`: GPL, AGPL, LGPL, SSPL, EUPL, OSL, BUSL, CC-BY-NC, CC-BY-ND, Commons-Clause | **yes** |
+
+SPDX expressions are evaluated, not text-matched: `MIT OR GPL-3.0-only` is allowed (the consumer picks
+MIT), `MIT AND CC-BY-4.0` needs review (both apply), and a `WITH` exception never rescues a forbidden
+licence. Our own packages (`ownPackages`: `@easylife365/*`, `EL.*`) are not checked.
+
+**Excluding a reviewed package** goes in `.licenceignore` at the root of the caller repository, read from
+its **default branch** (never from the pull request being checked, so a pull request cannot hide its own
+findings; an entry takes effect once merged). One package per line, `*` is the wildcard, `name@version`
+pins a single version, `#` starts a comment. Say why in the comment. Keep entries narrow:
+`Microsoft.AspNetCore.*` is a decision about a family, `*` is a decision about everything.
+
+**Tools**, pinned to exact versions in the workflow and not tracked by Dependabot, so bump them by hand:
+[nuget-license](https://github.com/sensslen/nuget-license) 4.0.18 for .NET (the whole graph, transitive
+included) and [license-checker-rseidelsohn](https://github.com/RSeidelsohn/license-checker-rseidelsohn)
+5.0.1 for npm (production dependencies only). `scripts/licence-report.mjs` classifies their output and
+writes the report; `scripts/lib/licence-policy.test.mjs` tests it.
 
 ### Versioning
 
