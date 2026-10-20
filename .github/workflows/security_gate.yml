@@ -6,11 +6,12 @@ name: Security gate
 #                        run with full-history, which is how a secret that predates this
 #                        workflow gets found
 #   .NET dependencies    Critical or High advisories in the solution's package graph
-#   npm dependencies     High or Critical advisories in the yarn workspace
+#   npm dependencies     High or Critical advisories in the production dependencies of the yarn
+#                        workspace, or of the repository's npm package-lock.json
 #   .NET licences        the licence of every package in the solution's graph, against
 #                        licence-policy/policy.json in this repository
 #   npm licences         the same for the repository's production dependencies, or everything installed
-#                        in a yarn workspace
+#                        in a workspace
 #
 # Called from each repository's .github/workflows/security.yml. The file name differs from the
 # caller's on purpose: in this repository the two would otherwise collide on one path, and the
@@ -25,6 +26,14 @@ name: Security gate
 #         dotnet-solution: EL.Core.sln
 #       secrets:
 #         package-token: ${{ secrets.PACKAGE_TOKEN }}
+#
+# A repository with a package-lock.json instead of a yarn.lock sets node-package-manager. A frontend in
+# a subfolder sets node-working-directory to the folder that holds the lockfile:
+#
+#       with:
+#         node: true
+#         node-package-manager: npm
+#         node-working-directory: EL.Onboarding
 #
 # The licence checks run whenever dotnet-solution is set or node is true, and REPORT ONLY: findings
 # appear as warnings and in the job summary, and never fail the gate. Pass `licence-enforce: true` to
@@ -52,10 +61,20 @@ on:
         type: string
         default: '10.x'
       node:
-        description: Run yarn audit on the repository's yarn workspace.
+        description: Run an advisory audit (and, with licence-check, a licence check) of the npm dependencies, with the package manager node-package-manager names.
         required: false
         type: boolean
         default: false
+      node-package-manager:
+        description: 'yarn (yarn.lock, yarn v1) or npm (package-lock.json). Anything else fails the job. Both audit production dependencies only, with an install that runs no scripts.'
+        required: false
+        type: string
+        default: yarn
+      node-working-directory:
+        description: Folder, relative to the repository root, that holds the lockfile and package.json. Defaults to the root. The folder is a trusted caller input, never pull request content.
+        required: false
+        type: string
+        default: .
       node-version:
         required: false
         type: string
@@ -215,17 +234,30 @@ jobs:
           ref: ${{ inputs.checkout-ref || github.sha }}
           persist-credentials: false
 
-      # No `cache: yarn`: a PR or merge-queue ref cannot reuse another one's cache, so every run saved its own
-      # ~1.4 GB copy that rarely hit, filling the 10 GB repo quota and evicting useful caches (#153).
+      - name: Check the package manager
+        env:
+          PACKAGE_MANAGER: ${{ inputs.node-package-manager }}
+        run: |
+          if [ "${PACKAGE_MANAGER}" != "yarn" ] && [ "${PACKAGE_MANAGER}" != "npm" ]; then
+            echo "::error::node-package-manager must be 'yarn' or 'npm', not '${PACKAGE_MANAGER}'."
+            exit 1
+          fi
+
+      # No `cache: yarn` or `cache: npm`: a PR or merge-queue ref cannot reuse another one's cache, so every run
+      # saved its own ~1.4 GB copy that rarely hit, filling the 10 GB repo quota and evicting useful caches (#153).
       - uses: actions/setup-node@v7
         with:
           node-version: ${{ inputs.node-version }}
 
       - name: Install without running scripts
+        if: inputs.node-package-manager == 'yarn'
+        working-directory: ${{ inputs.node-working-directory }}
         run: yarn install --frozen-lockfile --ignore-scripts
 
       # yarn v1 returns a bit mask: 1 info, 2 low, 4 moderate, 8 high, 16 critical.
       - name: Audit
+        if: inputs.node-package-manager == 'yarn'
+        working-directory: ${{ inputs.node-working-directory }}
         run: |
           set +e
           yarn audit --level high --groups dependencies
@@ -235,6 +267,23 @@ jobs:
             echo "::error::High or Critical advisories in the npm dependency graph. See the audit above."
             exit 1
           fi
+
+      # npm ci installs exactly package-lock.json and fails when package.json disagrees with it.
+      # --ignore-scripts alone does not stop npm running code from a git dependency, so --allow-git=none
+      # refuses those too (npm 11.10 or later; an older npm only warns about the unknown flag).
+      - name: Install without running scripts (npm)
+        if: inputs.node-package-manager == 'npm'
+        working-directory: ${{ inputs.node-working-directory }}
+        run: npm ci --ignore-scripts --allow-git=none --no-audit --no-fund
+
+      # The same rule as the yarn audit: High or Critical in production dependencies fail, dev-only
+      # advisories and anything below High do not. npm audit exits 1 when it finds one at or above the
+      # level, and also when the advisory service cannot be reached, so an outage fails the job rather
+      # than passing unchecked; the output above says which of the two it was.
+      - name: Audit (npm)
+        if: inputs.node-package-manager == 'npm'
+        working-directory: ${{ inputs.node-working-directory }}
+        run: npm audit --audit-level=high --omit=dev
 
   # The licence jobs are separate from the advisory jobs above on purpose: a licence finding must not
   # turn ".NET dependencies" or "npm dependencies" red, and while the checks only report, nothing
@@ -389,7 +438,16 @@ jobs:
             tools
           persist-credentials: false
 
-      # No `cache: yarn`, same reason as the npm dependencies job above (#153).
+      - name: Check the package manager
+        env:
+          PACKAGE_MANAGER: ${{ inputs.node-package-manager }}
+        run: |
+          if [ "${PACKAGE_MANAGER}" != "yarn" ] && [ "${PACKAGE_MANAGER}" != "npm" ]; then
+            echo "::error::node-package-manager must be 'yarn' or 'npm', not '${PACKAGE_MANAGER}'."
+            exit 1
+          fi
+
+      # No node cache, same reason as the npm dependencies job above (#153).
       - uses: actions/setup-node@v7
         with:
           node-version: ${{ inputs.node-version }}
@@ -415,16 +473,26 @@ jobs:
           fi
 
       - name: Install without running scripts
+        if: inputs.node-package-manager == 'yarn'
+        working-directory: ${{ inputs.node-working-directory }}
         env:
           GITHUB_PACKAGE_TOKEN: ${{ secrets.package-token-readonly || secrets.package-token }}
         run: yarn install --frozen-lockfile --ignore-scripts
+
+      - name: Install without running scripts (npm)
+        if: inputs.node-package-manager == 'npm'
+        working-directory: ${{ inputs.node-working-directory }}
+        env:
+          GITHUB_PACKAGE_TOKEN: ${{ secrets.package-token-readonly || secrets.package-token }}
+        run: npm ci --ignore-scripts --allow-git=none --no-audit --no-fund
 
       # The lister's dependencies come from its own lockfile (npm ci), with no install scripts and no
       # token in the environment.
       #
       # A repository with a single package.json lists only its production dependencies: what ships is
-      # what the licences bind. A yarn workspace lists everything that is installed instead, because
-      # license-checker's --production reads only the ROOT package.json, and a workspace root usually
+      # what the licences bind, for yarn and npm alike. A workspace (yarn or npm) lists everything that is
+      # installed instead, because license-checker's --production reads only the ROOT package.json, and a
+      # workspace root usually
       # lists none of the packages its apps use (checked on EasyLife365-Identity: the root listing
       # missed recharts, file-saver, jszip, papaparse and the other packages only the apps depend on).
       # The price is that development tooling is checked too. Private workspace packages are the
@@ -437,10 +505,14 @@ jobs:
           node-version: '24.x'
 
       - name: List the licences
+        env:
+          NODE_DIRECTORY: ${{ inputs.node-working-directory }}
         run: |
           cp -r ./.easylife-workflows/tools/licence-checker "${RUNNER_TEMP}/licence-checker"
           npm ci --ignore-scripts --no-audit --no-fund --prefix "${RUNNER_TEMP}/licence-checker" \
             || echo "::warning::Could not install the licence lister; the listing will be missing."
+          # The lister reads the node_modules of the folder it runs in.
+          cd -- "${NODE_DIRECTORY}"
           scope="--production"
           if node -e 'process.exit(require("./package.json").workspaces ? 0 : 1)'; then
             scope=""

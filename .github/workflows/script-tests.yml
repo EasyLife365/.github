@@ -9,6 +9,7 @@ on:
       - 'scripts/**'
       - 'licence-policy/**'
       - 'tools/**'
+      - '.github/workflows/security_gate.yml'
       - '.github/workflows/script-tests.yml'
 
 permissions:
@@ -39,3 +40,31 @@ jobs:
 
       - name: Run script unit tests
         run: node --test scripts/lib/dependency-only.test.mjs scripts/lib/licence-policy.test.mjs scripts/lib/licence-report.test.mjs
+
+      # The Security gate's npm mode, on a throwaway project built here: ms is a production dependency
+      # and lodash 4.17.20 (High advisories) a development one. Proves what the gate relies on: the audit
+      # with --omit=dev passes while the full audit fails, a vulnerable production dependency fails the
+      # audit, and the licence lister, run as the gate runs it, lists production dependencies only.
+      - name: Check the Security gate's npm mode
+        run: |
+          lister="${PWD}/tools/licence-checker/node_modules/license-checker-rseidelsohn/bin/license-checker-rseidelsohn.js"
+          project="${RUNNER_TEMP}/npm-mode"
+          mkdir "${project}"
+          cd "${project}"
+          echo '{"name":"npm-mode-fixture","version":"1.0.0","private":true}' > package.json
+          npm install ms@2.1.3 --save-prod --package-lock-only --no-audit --no-fund
+          npm install lodash@4.17.20 --save-dev --package-lock-only --no-audit --no-fund
+          npm ci --ignore-scripts --allow-git=none --no-audit --no-fund
+          npm audit --audit-level=high --omit=dev
+          if npm audit --audit-level=high > /dev/null 2>&1; then
+            echo "::error::The full audit should have found the High advisory in the development dependency."
+            exit 1
+          fi
+          node "${lister}" --production --excludePrivatePackages --json --out listing.json
+          node -e 'const k = Object.keys(require("./listing.json")); if (k.join() !== "ms@2.1.3") { console.error("listed: " + k.join()); process.exit(1); } console.log("listed: " + k.join())'
+          npm install lodash@4.17.20 --save-prod --package-lock-only --no-audit --no-fund
+          npm ci --ignore-scripts --no-audit --no-fund
+          if npm audit --audit-level=high --omit=dev > /dev/null 2>&1; then
+            echo "::error::The audit should have failed on a High advisory in a production dependency."
+            exit 1
+          fi
