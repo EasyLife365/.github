@@ -145,7 +145,10 @@ permissions:
 
 jobs:
   run-tests:
-    runs-on: ubuntu-latest
+    # Pinned, not ubuntu-latest: that label moved to 26.04, and packages.microsoft.com has no
+    # azure-functions-core-tools-4 for it (apt: "Unable to locate package"), which breaks the
+    # Core Tools install below. Move back to ubuntu-latest once Microsoft publishes it for 26.04.
+    runs-on: ubuntu-24.04
 
     steps:
       - name: Refuse checkout-ref for anyone but an allow-listed bot
