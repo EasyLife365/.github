@@ -13,7 +13,7 @@ export function isValidBranchName(branch) {
 export function branchNameMessage(branch) {
   return (
     `Branch "${branch}" does not follow the convention: pr<issue> -- issue #456 becomes pr456, ` +
-    'with no separator. Append -1, -2 on a name collision (pr456-1). Across repositories use ' +
-    '<repositoryName><issue>. The older <type>/pr<issue> form is still accepted.'
+    'with no separator. Append -1, -2 on a name collision (pr456-1). ' +
+    'The older <type>/pr<issue> and <type>/<repositoryName><issue> forms are still accepted.'
   );
 }
