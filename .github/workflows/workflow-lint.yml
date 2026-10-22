@@ -1,0 +1,20 @@
+name: Workflow lint
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  merge_group:
+    types: [checks_requested]
+
+permissions:
+  contents: read
+
+jobs:
+  # The local path, not @main: lints this repository's own workflow files -- workflow_lint.yml
+  # included -- with the version of the reusable workflow that is in the pull request, so a change
+  # to it is checked by itself before it merges. Same job id as every caller, so the required
+  # check name is identical org-wide.
+  call-workflow-lint:
+    uses: ./.github/workflows/workflow_lint.yml
