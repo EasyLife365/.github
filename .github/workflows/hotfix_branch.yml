@@ -1,0 +1,100 @@
+name: Hotfix Branch
+
+# Creates the branch for a hotfix from the tag that runs on a ring. Started by hand in the calling
+# repository (workflow_dispatch) with the run ref set to that tag, for example v2.49.0.
+#
+# The branch is named after the tag the fix will get: the highest existing tag with the same
+# MAJOR.MINOR plus one, so v2.49.0 (with no v2.49.1 yet) gives hotfix/v2.49.1, and v2.49.0 with
+# v2.49.1 already tagged gives hotfix/v2.49.2. Nobody types a branch name. It stops without
+# creating anything when the ref is not a vMAJOR.MINOR.PATCH tag or when the branch exists.
+#
+# It never creates a tag and never deletes anything. A person tags the branch tip after the fix is
+# merged and deploys; the branch is deleted by hand after tagging.
+#
+# Replaces create_maintenance_branch.yml (vX.Y.x branches), which stays until no repository calls
+# it. Caller:
+#
+#   on:
+#     workflow_dispatch:
+#   jobs:
+#     call-hotfix-branch:
+#       uses: EasyLife365/.github/.github/workflows/hotfix_branch.yml@main
+#       permissions:
+#         contents: write
+
+on:
+  workflow_call:
+
+permissions:
+  contents: write
+
+jobs:
+  create-hotfix-branch:
+    runs-on: ubuntu-latest
+
+    steps:
+      # Full history and every tag: the next patch number is read from the tags.
+      - name: Checkout repository
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      # One step on purpose, so the same script runs unchanged in the local test. The ref is only
+      # ever read through the environment, never interpolated into the script.
+      - name: Create hotfix branch
+        env:
+          RUN_REF: ${{ github.ref }}
+        run: |
+          set -euo pipefail
+
+          say() {
+            echo "$1"
+            echo "$1" >> "${GITHUB_STEP_SUMMARY:-/dev/null}"
+          }
+
+          # The run ref must be a plain release tag.
+          if [[ "$RUN_REF" != refs/tags/* ]]; then
+            echo "::error::This workflow must be started from a tag, for example v2.49.0. Current ref: $RUN_REF"
+            exit 1
+          fi
+          TAG="${RUN_REF#refs/tags/}"
+          if [[ ! "$TAG" =~ ^v([0-9]+)\.([0-9]+)\.([0-9]+)$ ]]; then
+            echo "::error::Tag '$TAG' is not of the form vMAJOR.MINOR.PATCH (for example v2.49.0). Nothing was created."
+            exit 1
+          fi
+          MAJOR="${BASH_REMATCH[1]}"
+          MINOR="${BASH_REMATCH[2]}"
+
+          # Highest patch already tagged on origin for this MAJOR.MINOR (the running tag counts).
+          HIGHEST="$(git ls-remote --tags --refs origin "refs/tags/v${MAJOR}.${MINOR}.*" \
+            | sed 's|.*refs/tags/||' \
+            | grep -E "^v${MAJOR}\.${MINOR}\.[0-9]+$" \
+            | sort -V | tail -n 1)"
+          if [[ -z "$HIGHEST" ]]; then
+            echo "::error::Tag $TAG was not found on origin. Nothing was created."
+            exit 1
+          fi
+          NEXT_PATCH=$(( ${HIGHEST##*.} + 1 ))
+          NEW_TAG="v${MAJOR}.${MINOR}.${NEXT_PATCH}"
+          BRANCH="hotfix/${NEW_TAG}"
+
+          if [[ -n "$(git ls-remote --heads origin "refs/heads/${BRANCH}")" ]]; then
+            echo "::error::Branch ${BRANCH} already exists. Use it, or ask its owner to finish it. Nothing was created."
+            exit 1
+          fi
+
+          # Branch from the commit the tag points to (also right for annotated tags).
+          git push origin "refs/tags/${TAG}^{commit}:refs/heads/${BRANCH}"
+
+          say "## Hotfix branch created"
+          say ""
+          say "- Branch: \`${BRANCH}\`, created from tag \`${TAG}\`"
+          say "- Tag the fix will get: \`${NEW_TAG}\`"
+          say ""
+          say "### Next steps"
+          say ""
+          say "1. Fix on a pr<number> branch and open the pull request into \`${BRANCH}\`."
+          say "2. After the merge, a person creates the tag \`${NEW_TAG}\` on the tip of \`${BRANCH}\` by hand. This workflow never tags."
+          say "3. Deploy \`${NEW_TAG}\` to the ring that runs \`${TAG}\`. Then delete the branch \`${BRANCH}\`."
+          say "4. Every other ring that runs an affected version gets its own hotfix branch from its own tag, with a cherry-pick of the fix, its own tag and deploy, oldest ring first."
+          say "5. Last, a cherry-pick pull request into main, which gets no tag."
