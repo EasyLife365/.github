@@ -6,8 +6,10 @@
 #
 # ADVISORY, NEVER A GATE. It posts comments and stops there:
 #
-#   - It never approves a pull request, and never counts toward the two required human
-#     approvals. contents: read, so it cannot write to the branch either.
+#   - It never approves a pull request, and never counts toward the required approval: one
+#     accountable human approval plus the agent-review and compliance-gate checks, and two
+#     approvals for breaking changes in Core and the React
+#     libraries. It is contents: read, so it cannot write to the branch either.
 #   - Do not make it a required check. An LLM finding is an opinion worth reading, not a fact,
 #     and a flaky merge gate teaches people to ignore the checks that are not flaky.
 #
