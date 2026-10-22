@@ -78,7 +78,7 @@ on:
         default: ''
 
       timeout-minutes:
-        description: 'Job timeout in minutes. The default is about twice the slowest P95 run time of the unit and integration lanes across the calling repositories over 30 days (EasyLife365/.github#124). Raise it for a lane that is legitimately slower; a hung run then fails instead of holding the runner, and any non-cancelling concurrency group, for six hours.'
+        description: 'Job timeout in minutes. The default leaves headroom over the slowest P95 run time measured across the calling repositories over 30 days: about 10 minutes for a unit lane, about 5 for an integration lane (EasyLife365/.github#124). Raise it for a lane that is legitimately slower; a hung run then fails instead of holding the runner, and any non-cancelling concurrency group, for six hours.'
         required: false
         type: number
         default: 30
