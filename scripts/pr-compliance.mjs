@@ -24,6 +24,7 @@
 import { execFileSync } from 'node:child_process';
 import { readFileSync, existsSync, appendFileSync } from 'node:fs';
 import { basename } from 'node:path';
+import { isValidBranchName, branchNameMessage } from './lib/branch-name.mjs';
 
 const env = process.env;
 
@@ -424,11 +425,8 @@ if (enabled('branch-name') && !pr) {
       'the pull request entered the queue, and the queue\'s own temporary branch name is not ' +
       'the pull request\'s real branch.',
   );
-} else if (enabled('branch-name') && !isBot && branch && !BRANCH_OK.test(branch)) {
-  const message =
-    `Branch "${branch}" does not follow the convention: <type>/pr<issue> in the same ` +
-    'repository, or <type>/<repositoryName><issue> across repositories -- issue #456 becomes ' +
-    'pr456, with no separator. Append -1, -2 on a name collision.';
+} else if (enabled('branch-name') && !isBot && branch && !isValidBranchName(branch)) {
+  const message = branchNameMessage(branch);
   if (cfg.failOnBranchName) fail('branch-name', message);
   else warn('branch-name', message);
 }

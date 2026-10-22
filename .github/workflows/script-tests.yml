@@ -39,7 +39,7 @@ jobs:
           node -e 'const n = Object.keys(require(process.argv[1])).length; if (n < 100) { console.error("only " + n + " packages listed"); process.exit(1); } console.log(n + " packages listed")' "${RUNNER_TEMP}/lister.json"
 
       - name: Run script unit tests
-        run: node --test scripts/lib/dependency-only.test.mjs scripts/lib/licence-policy.test.mjs scripts/lib/licence-report.test.mjs
+        run: node --test scripts/lib/branch-name.test.mjs scripts/lib/dependency-only.test.mjs scripts/lib/licence-policy.test.mjs scripts/lib/licence-report.test.mjs
 
       # The Security gate's npm mode, on a throwaway project built here: ms is a production dependency
       # and lodash 4.17.20 (High advisories) a development one. Proves what the gate relies on: the audit
