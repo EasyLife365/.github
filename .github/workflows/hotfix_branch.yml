@@ -3,18 +3,20 @@ name: Hotfix Branch
 # Creates the branch for a hotfix from the tag that runs on a ring, for example v2.49.0. The caller
 # dispatches from main and passes the running tag as input. The tag is not the run ref on purpose:
 # a workflow_dispatch on a tag runs the caller file as it exists in that old tag, and the tag that
-# runs on a ring may predate the caller or still hold the old maintenance caller.
+# runs on a ring may predate the caller or still hold the old maintenance caller. The run ref must
+# be main; anything else fails.
 #
-# The branch is named after the tag the fix will get: the highest existing tag with the same
-# MAJOR.MINOR plus one, so v2.49.0 (with no v2.49.1 yet) gives hotfix/v2.49.1, and v2.49.0 with
-# v2.49.1 already tagged gives hotfix/v2.49.2. Nobody types a branch name. It stops without
-# creating anything when the input is not a vMAJOR.MINOR.PATCH tag on origin or when the branch
-# exists. The branch is created create-only from the commit the tag pointed to when the run
-# started, so two runs can never move each other's branch.
+# The branch is named after the tag the fix will get: the highest existing tag or hotfix branch
+# with the same MAJOR.MINOR plus one, so v2.49.0 (with no v2.49.1 yet) gives hotfix/v2.49.1, and
+# v2.49.1 with hotfix/v2.49.2 already cut from v2.49.0 gives hotfix/v2.49.3. Nobody types a branch
+# name. It stops without creating anything when the input is not a vMAJOR.MINOR.PATCH tag on
+# origin, when the name is taken or when GitHub refuses a call. The branch is created create-only
+# from the commit the tag pointed to when the run started, so two runs can never move each
+# other's branch.
 #
-# The new tag does not contain a patch tagged for another ring of the same minor: v2.49.2 made
-# from v2.49.0 does not contain v2.49.1. Cherry-pick that fix too if it applies. The job summary
-# says so to the person who tags.
+# The new tag does not contain the other patches and branches of the same minor: hotfix/v2.49.2
+# cut from v2.49.0 does not contain v2.49.1. Cherry-pick that fix too if it applies. The job
+# summary lists them for the person who tags.
 #
 # It never creates a tag and never deletes anything. A person tags the branch tip after the fix is
 # merged and deploys; the Lead Architect deletes the branch after tagging.
@@ -51,8 +53,8 @@ jobs:
   create-hotfix-branch:
     runs-on: ubuntu-latest
 
-    # One run at a time per repository, so the next free patch is read after the previous run
-    # created its branch.
+    # One run at a time per repository: a run reads the tags and branches only after the previous
+    # run has created its branch, so two runs do not pick the same patch number.
     concurrency:
       group: hotfix-branch-${{ github.repository }}
       cancel-in-progress: false
@@ -72,59 +74,117 @@ jobs:
             echo "$1"
             echo "$1" >> "${GITHUB_STEP_SUMMARY:-/dev/null}"
           }
+          # Printable ASCII only, so a value from outside can never start a second log line.
+          clean() {
+            printf '%s' "$1" | tr -c '[:print:]' '?'
+          }
           fail() {
             echo "::error::$1 Nothing was created."
             echo "Hotfix branch not created: $1 Nothing was created." >> "${GITHUB_STEP_SUMMARY:-/dev/null}"
             exit 1
           }
+          # api_get <gh api args>: output in API_OUT; returns 0 ok, 1 on HTTP 404, 2 on any other error.
+          api_get() {
+            local rc=0
+            API_OUT="$(gh api "$@" 2>&1)" || rc=$?
+            if (( rc != 0 )); then
+              if [[ "$API_OUT" == *"HTTP 404"* ]]; then
+                return 1
+              fi
+              return 2
+            fi
+          }
+
+          SAFE_TAG="${TAG//[^A-Za-z0-9._-]/?}"
 
           if [[ "$EVENT_NAME" != "workflow_dispatch" ]]; then
-            fail "This workflow must be started by workflow_dispatch from main. Current event: ${EVENT_NAME}."
+            fail "This workflow must be started by workflow_dispatch from main. Current event: $(clean "$EVENT_NAME")."
           fi
-          if [[ ! "$TAG" =~ ^v([0-9]+)\.([0-9]+)\.([0-9]+)$ ]]; then
-            fail "Tag '${TAG}' is not of the form vMAJOR.MINOR.PATCH (for example v2.49.0)."
+          if [[ "${GITHUB_REF:-}" != "refs/heads/main" ]]; then
+            fail "This workflow must be started from main. Current ref: $(clean "${GITHUB_REF:-}")."
+          fi
+          if [[ ! "$TAG" =~ ^v([0-9]+)\.([0-9]+)\.([0-9]{1,9})$ ]]; then
+            fail "The tag input '${SAFE_TAG}' is not of the form vMAJOR.MINOR.PATCH (for example v2.49.0)."
           fi
           MAJOR="${BASH_REMATCH[1]}"
           MINOR="${BASH_REMATCH[2]}"
 
-          # The tag must exist on origin. Resolve its commit once; an annotated tag is peeled.
-          if ! TAG_OBJECT="$(gh api "repos/${GITHUB_REPOSITORY}/git/ref/tags/${TAG}" --jq '.object.type + " " + .object.sha' 2>/dev/null)"; then
-            fail "Tag ${TAG} was not found on origin."
+          # The tag must exist on origin. Resolve its commit once; tags of tags are peeled.
+          rc=0
+          api_get "repos/${GITHUB_REPOSITORY}/git/ref/tags/${TAG}" --jq '.object.type + " " + .object.sha' || rc=$?
+          if (( rc == 1 )); then
+            fail "Tag ${SAFE_TAG} was not found on origin."
+          elif (( rc != 0 )); then
+            fail "Tag ${SAFE_TAG} could not be read: $(clean "$API_OUT")."
           fi
-          if [[ "${TAG_OBJECT%% *}" == "tag" ]]; then
-            SHA="$(gh api "repos/${GITHUB_REPOSITORY}/git/tags/${TAG_OBJECT##* }" --jq '.object.sha')"
-          else
-            SHA="${TAG_OBJECT##* }"
+          OBJ_TYPE="${API_OUT%% *}"
+          OBJ_SHA="${API_OUT##* }"
+          for _ in 1 2 3 4 5; do
+            if [[ "$OBJ_TYPE" != "tag" ]]; then
+              break
+            fi
+            rc=0
+            api_get "repos/${GITHUB_REPOSITORY}/git/tags/${OBJ_SHA}" --jq '.object.type + " " + .object.sha' || rc=$?
+            if (( rc != 0 )); then
+              fail "The tag object of ${SAFE_TAG} could not be read: $(clean "$API_OUT")."
+            fi
+            OBJ_TYPE="${API_OUT%% *}"
+            OBJ_SHA="${API_OUT##* }"
+          done
+          if [[ "$OBJ_TYPE" != "commit" || ! "$OBJ_SHA" =~ ^[0-9a-f]{40}$ ]]; then
+            fail "Tag ${SAFE_TAG} does not point to a commit."
           fi
+          SHA="$OBJ_SHA"
 
-          # Highest patch already tagged for this MAJOR.MINOR (the running tag counts). Full refs are
-          # matched before the prefix is stripped, so a nested name never counts.
-          HIGHEST="$(gh api --paginate "repos/${GITHUB_REPOSITORY}/git/matching-refs/tags/v${MAJOR}.${MINOR}." --jq '.[].ref' \
-            | grep -E "^refs/tags/v${MAJOR}\.${MINOR}\.[0-9]+$" \
-            | sed 's|^refs/tags/||' \
-            | sort -V | tail -n 1 || true)"
+          # Existing tags and hotfix branches of this MAJOR.MINOR. Each call stands alone, so a
+          # failed page fails the run. Full refs are matched before the prefix is stripped, so a
+          # nested name never counts; the patch is at most 9 digits.
+          if ! TAG_REFS="$(gh api --paginate "repos/${GITHUB_REPOSITORY}/git/matching-refs/tags/v${MAJOR}.${MINOR}." --jq '.[].ref' 2>&1)"; then
+            fail "Tags could not be listed: $(clean "$TAG_REFS")."
+          fi
+          if ! BRANCH_REFS="$(gh api --paginate "repos/${GITHUB_REPOSITORY}/git/matching-refs/heads/hotfix/v${MAJOR}.${MINOR}." --jq '.[].ref' 2>&1)"; then
+            fail "Hotfix branches could not be listed: $(clean "$BRANCH_REFS")."
+          fi
+          TAG_LIST="$({ printf '%s\n' "$TAG_REFS" | grep -E "^refs/tags/v${MAJOR}\.${MINOR}\.[0-9]{1,9}$" || true; } | sed 's#^refs/tags/##')"
+          BRANCH_LIST="$({ printf '%s\n' "$BRANCH_REFS" | grep -E "^refs/heads/hotfix/v${MAJOR}\.${MINOR}\.[0-9]{1,9}$" || true; } | sed 's#^refs/heads/##')"
+          HIGHEST="$({ printf '%s\n' "$TAG_LIST"; printf '%s\n' "${BRANCH_LIST//hotfix\//}"; } | sed '/^$/d' | sort -V | tail -n 1)"
           if [[ -z "$HIGHEST" ]]; then
             fail "No tag v${MAJOR}.${MINOR}.N was found on origin."
           fi
+          OTHERS="$({ printf '%s\n' "$TAG_LIST"; printf '%s\n' "$BRANCH_LIST"; } | sed '/^$/d' | { grep -vxF -- "$TAG" || true; } | sort -V)"
           NEXT_PATCH=$(( 10#${HIGHEST##*.} + 1 ))
           NEW_TAG="v${MAJOR}.${MINOR}.${NEXT_PATCH}"
           BRANCH="hotfix/${NEW_TAG}"
 
-          if gh api "repos/${GITHUB_REPOSITORY}/git/ref/heads/${BRANCH}" >/dev/null 2>&1; then
-            fail "Branch ${BRANCH} already exists. Use it, or ask its owner to finish it."
+          # Neither the branch nor the tag it will become may exist.
+          rc=0
+          api_get "repos/${GITHUB_REPOSITORY}/git/ref/heads/${BRANCH}" || rc=$?
+          if (( rc == 0 )); then
+            fail "Branch ${BRANCH} already exists."
+          elif (( rc != 1 )); then
+            fail "Branch ${BRANCH} could not be checked: $(clean "$API_OUT")."
+          fi
+          rc=0
+          api_get "repos/${GITHUB_REPOSITORY}/git/ref/tags/${NEW_TAG}" || rc=$?
+          if (( rc == 0 )); then
+            fail "Tag ${NEW_TAG} already exists."
+          elif (( rc != 1 )); then
+            fail "Tag ${NEW_TAG} could not be checked: $(clean "$API_OUT")."
           fi
 
           # Create-only: the API answers 422 when the ref exists, so a second run cannot move it.
-          if ! gh api -X POST "repos/${GITHUB_REPOSITORY}/git/refs" -f "ref=refs/heads/${BRANCH}" -f "sha=${SHA}" >/dev/null; then
-            fail "Branch ${BRANCH} could not be created (it may have been created by another run)."
+          if ! POST_OUT="$(gh api -X POST "repos/${GITHUB_REPOSITORY}/git/refs" -f "ref=refs/heads/${BRANCH}" -f "sha=${SHA}" 2>&1)"; then
+            clean "$POST_OUT"
+            echo
+            fail "Branch ${BRANCH} could not be created, see the log (another run, a ruleset or a branch named hotfix)."
           fi
 
           say "## Hotfix branch created"
           say ""
-          say "- Branch: \`${BRANCH}\`, created from tag \`${TAG}\`"
+          say "- Branch: \`${BRANCH}\`, created from tag \`${TAG}\` at commit \`${SHA}\`"
           say "- Tag the fix will get: \`${NEW_TAG}\`"
-          if [[ "$HIGHEST" != "$TAG" ]]; then
-            say "- \`${NEW_TAG}\` does not contain \`${HIGHEST}\`, which is tagged for another ring of the same minor. Cherry-pick that fix as well if it applies."
+          if [[ -n "$OTHERS" ]]; then
+            say "- Other tags and branches of v${MAJOR}.${MINOR} that exist: \`${OTHERS//$'\n'/\`, \`}\`. \`${NEW_TAG}\` does not contain them. Cherry-pick a fix from them as well if it applies."
           fi
           say ""
           say "### Next steps"
