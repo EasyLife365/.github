@@ -21,7 +21,7 @@ Every repository calls these rather than copying the steps, so a fix lands once.
 | `spa_build.yml`, `spa_deploy.yml` | Build and deploy a single-page app |
 | `release_nuget_packages.yml` | Publish NuGet packages |
 | `create_maintenance_branch.yml` | Cut a maintenance branch |
-| `hotfix_branch.yml` | Create `hotfix/vX.Y.N` from the tag that runs on a ring; never tags, never deletes. Replaces `create_maintenance_branch.yml`, which stays until no repository calls it |
+| `hotfix_branch.yml` | Create `hotfix/vX.Y.N` from the tag that runs on a ring |
 | `azure-storage-sync.yml` | Sync blob storage between rings |
 | **`pr_compliance.yml`** | **Deterministic pull request checks — the facts** |
 | **`pr_code_review.yml`** | **The EasyLife 365 review standard, run on the pull request — the judgement** |
