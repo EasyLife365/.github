@@ -102,12 +102,15 @@ jobs:
 
       - name: Set version (npm)
         if: ${{ inputs.publish && !inputs.yarn }}
-        run: npm version ${{ steps.version.outputs.versionWithoutV }} --no-git-tag-version
+        run: npm version "$PKG_VERSION" --no-git-tag-version
+        env:
+          PKG_VERSION: ${{ steps.version.outputs.versionWithoutV }}
 
       - name: Set version (yarn)
         if: ${{ inputs.publish && inputs.yarn }}
-        run: yarn version --new-version ${{ steps.version.outputs.versionWithoutV }} --no-git-tag-version
+        run: yarn version --new-version "$PKG_VERSION" --no-git-tag-version
         env:
+          PKG_VERSION: ${{ steps.version.outputs.versionWithoutV }}
           GITHUB_PACKAGE_TOKEN: ${{ secrets.GITHUB_PACKAGE_TOKEN }}
 
       - name: Build (npm)
@@ -163,9 +166,159 @@ jobs:
           path: junit.xml                     
           reporter: jest-junit
 
+      # Which npm dist-tag a version is published under. The runner is Node 24 (npm 11): there a plain
+      # `npm publish` of a version below the highest released one gets no implicit `latest` and is
+      # refused ("use --tag"), and so is a pre-release without --tag (npm/cli#7939, npm/cli#7910). So a
+      # hotfix of an older line (vX.Y.N from hotfix/vX.Y.N) used to fail to publish. This step makes it
+      # publishable under `maint-<MAJOR>.<MINOR>` without it ever becoming `latest`:
+      #
+      #   - greater than latest, release version  -> plain `npm publish` (becomes latest)
+      #   - greater than latest, pre-release (-)  -> `--tag next`, same release-of-the-tag condition
+      #   - equal or lower than latest            -> `--tag maint-<MAJOR>.<MINOR>`, but ONLY for a run
+      #     started by a GitHub release of the tag vX.Y.N being published (a workflow_dispatch of any
+      #     branch must not publish feature code under a maint tag)
+      #   - no latest (404, package not visible, or only non-latest tags) -> only X.Y.0 may publish;
+      #     a hotfix has PATCH > 0, so it is refused instead of becoming latest by accident
+      #
+      # A re-release of an older patch moves `maint-X.Y` backwards; that is accepted. A registry lookup
+      # that fails for any other reason fails the job: nothing is published under a guessed tag.
+      #
+      # The event, ref type and ref name come from the github context (the caller's event inside a
+      # reusable workflow) through env:. The comparison is dependency-free (node only, no
+      # download in a publishing job) and follows SemVer 2.0.0 section 11. Build metadata cannot occur:
+      # the validation rejects `+`. Values reach the shell only through env: and are validated first.
       - name: Publish packages
         if: ${{ inputs.publish }}
-        run: npm publish
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          # Control characters are stripped from everything echoed into a workflow command.
+          clean() { printf '%s' "$1" | tr -d '\000-\037\177'; }
+          fail() { echo "::error::$(clean "$1")"; exit 1; }
+
+          # Only a GitHub release of the tag vPKG_VERSION may publish under a non-latest tag. The three
+          # EL_* values are the caller's event, passed in through env: (not the GITHUB_* runner variables,
+          # which an earlier step could in principle override through $GITHUB_ENV).
+          require_release_of_tag() {
+            if [[ "$EL_EVENT_NAME" != release || "$EL_REF_TYPE" != tag || "$EL_REF_NAME" != "v$PKG_VERSION" ]]; then
+              fail "$1 A hotfix or pre-release is published by a release of its vX.Y.N tag (event release, ref v$PKG_VERSION); this run is event '$EL_EVENT_NAME', $EL_REF_TYPE '$EL_REF_NAME'. Not publishing."
+            fi
+          }
+
+          # Build scripts and prepack/prepublishOnly hooks ran since the version was set: publish only
+          # if package.json still carries the version the gate and the comparison reasoned about.
+          publish() {
+            actual="$(node -p "require('./package.json').version")"
+            [ "$actual" = "$PKG_VERSION" ] || fail "package.json says version '$actual' but $PKG_VERSION is being published. Not publishing."
+            npm publish "$@"
+          }
+
+          version_re='^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$'
+          name_re='^@easylife365/[a-z0-9._-]+$'
+
+          [[ "$PKG_VERSION" =~ $version_re ]] || fail "Refusing to publish: version '$PKG_VERSION' is not MAJOR.MINOR.PATCH[-prerelease]."
+
+          pkg_name="$(node -p "require('./package.json').name")"
+          [[ "$pkg_name" =~ $name_re ]] || fail "Refusing to publish: package name '$pkg_name' is not an @easylife365/ package name."
+
+          core="${PKG_VERSION%%-*}"
+          major="${core%%.*}"
+          rest="${core#*.}"
+          minor="${rest%%.*}"
+          patch="${rest#*.}"
+
+          # The registry is not passed with --registry: the scoped registry of setup-node (and the
+          # repository .npmrc / publishConfig) decides, the same one `npm publish` uses.
+          err_file="$(mktemp)"
+          if latest="$(npm view "$pkg_name" dist-tags.latest 2>"$err_file")"; then
+            latest="${latest//[$'\r\n']/}"
+          elif grep -q 'E404' "$err_file"; then
+            latest=""
+          else
+            clean "$(cat "$err_file")"; echo
+            fail "Could not read the current latest of $pkg_name. Not publishing under an unknown tag."
+          fi
+
+          if [ -n "$latest" ] && ! [[ "$latest" =~ $version_re ]]; then
+            fail "The registry returned '$latest' as latest of $pkg_name, which is not a version. Not publishing."
+          fi
+
+          if [ -z "$latest" ]; then
+            if [ "$patch" != 0 ]; then
+              fail "$pkg_name has no latest and $PKG_VERSION has PATCH > 0 (a hotfix has PATCH > 0). Either the package is not visible to this token, or it is new: a new package starts at X.Y.0, so publish X.Y.0 first or publish by hand. Or it exists with only maint tags: set latest by hand once. Not publishing."
+            fi
+            result=greater
+            reason="$pkg_name has no latest yet (first publish of $core)."
+          else
+            result="$(node -e '
+              const parse = (v) => {
+                const [core, pre] = v.split(/-(.+)/);
+                return { n: core.split(".").map(Number), pre: pre ? pre.split(".") : [] };
+              };
+              const isNum = (s) => /^[0-9]+$/.test(s);
+              const cmpId = (a, b) => {
+                if (isNum(a) && isNum(b)) return Math.sign(Number(a) - Number(b));
+                if (isNum(a)) return -1;
+                if (isNum(b)) return 1;
+                return a < b ? -1 : a > b ? 1 : 0;
+              };
+              const cmp = (x, y) => {
+                const a = parse(x), b = parse(y);
+                for (let i = 0; i < 3; i++) if (a.n[i] !== b.n[i]) return a.n[i] > b.n[i] ? 1 : -1;
+                if (!a.pre.length && !b.pre.length) return 0;
+                if (!a.pre.length) return 1;
+                if (!b.pre.length) return -1;
+                for (let i = 0; i < Math.max(a.pre.length, b.pre.length); i++) {
+                  if (a.pre[i] === undefined) return -1;
+                  if (b.pre[i] === undefined) return 1;
+                  const c = cmpId(a.pre[i], b.pre[i]);
+                  if (c !== 0) return c;
+                }
+                return 0;
+              };
+              console.log(cmp(process.argv[1], process.argv[2]) > 0 ? "greater" : "not-greater");
+            ' "$PKG_VERSION" "$latest")"
+            if [ "$result" = greater ]; then
+              reason="$PKG_VERSION is greater than the current latest $latest."
+            else
+              reason="$PKG_VERSION is not greater than the current latest $latest."
+            fi
+          fi
+
+          case "$result" in
+            greater)
+              if [[ "$PKG_VERSION" == *-* ]]; then
+                require_release_of_tag "$PKG_VERSION is a pre-release and would be published under next."
+                tag=next
+                reason="$reason It is a pre-release, so it is published under next and never becomes latest."
+                publish --tag next
+              else
+                tag=latest
+                publish
+              fi
+              ;;
+            not-greater)
+              require_release_of_tag "$PKG_VERSION is not greater than the current latest $latest."
+              tag="maint-$major.$minor"
+              [[ "$tag" =~ ^maint-[0-9]+\.[0-9]+$ ]] || fail "Refusing to publish: computed dist-tag '$tag' is malformed."
+              publish --tag "$tag"
+              ;;
+            *)
+              fail "Unexpected comparison result '$result'. Not publishing."
+              ;;
+          esac
+
+          {
+            echo "### npm publish"
+            echo "- Package: \`$pkg_name\` version \`$PKG_VERSION\`"
+            echo "- Dist-tag: \`$tag\`"
+            echo "- Why: $reason"
+          } >> "$GITHUB_STEP_SUMMARY"
         env:
+          PKG_VERSION: ${{ steps.version.outputs.versionWithoutV }}
+          EL_EVENT_NAME: ${{ github.event_name }}
+          EL_REF_TYPE: ${{ github.ref_type }}
+          EL_REF_NAME: ${{ github.ref_name }}
           GITHUB_PACKAGE_TOKEN: ${{ secrets.GITHUB_PACKAGE_TOKEN }}
           NODE_AUTH_TOKEN: ${{ secrets.GITHUB_PACKAGE_TOKEN }}
