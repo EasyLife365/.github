@@ -163,9 +163,110 @@ jobs:
           path: junit.xml                     
           reporter: jest-junit
 
+      # A release of an older line (a hotfix tagged vX.Y.N from hotfix/vX.Y.N) must never become the npm
+      # `latest`: npm moves `latest` to whatever was published last. So the version being published is
+      # compared with the current `latest` of the package first. Greater than latest (or no latest yet):
+      # plain `npm publish`, it becomes `latest` as before. Equal or lower: published with
+      # `--tag maint-<MAJOR>.<MINOR>`, which leaves `latest` alone. A registry lookup that fails for any
+      # reason other than "package not found" fails the job, so nothing is ever published blindly.
+      #
+      # The comparison is dependency-free (node only, no download in a publishing job) and follows SemVer
+      # 2.0.0 section 11 for pre-releases. Build metadata cannot occur: the validation below rejects `+`.
+      # Caller and tag values reach the shell only through env: and are validated before use.
       - name: Publish packages
         if: ${{ inputs.publish }}
-        run: npm publish
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          fail() { echo "::error::$1"; exit 1; }
+
+          version_re='^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$'
+          name_re='^(@[a-z0-9._~-]+/)?[a-z0-9._~-]+$'
+
+          [[ "$PKG_VERSION" =~ $version_re ]] || fail "Refusing to publish: version '$PKG_VERSION' is not MAJOR.MINOR.PATCH[-prerelease]."
+
+          pkg_name="$(node -p "require('./package.json').name")"
+          [[ "$pkg_name" =~ $name_re ]] || fail "Refusing to publish: package name '$pkg_name' is not a valid npm package name."
+
+          err_file="$(mktemp)"
+          if latest="$(npm view "$pkg_name" dist-tags.latest --registry "$REGISTRY" 2>"$err_file")"; then
+            latest="${latest//[$'\r\n']/}"
+          elif grep -q 'E404' "$err_file"; then
+            latest=""
+          else
+            cat "$err_file"
+            fail "Could not read the current latest of $pkg_name from $REGISTRY. Not publishing under an unknown tag."
+          fi
+
+          if [ -n "$latest" ] && ! [[ "$latest" =~ $version_re ]]; then
+            fail "The registry returned '$latest' as latest of $pkg_name, which is not a version. Not publishing."
+          fi
+
+          if [ -z "$latest" ]; then
+            result=greater
+            reason="$pkg_name has no latest yet (first publish)."
+          else
+            result="$(node -e '
+              const parse = (v) => {
+                const [core, pre] = v.split(/-(.+)/);
+                return { n: core.split(".").map(Number), pre: pre ? pre.split(".") : [] };
+              };
+              const isNum = (s) => /^[0-9]+$/.test(s);
+              const cmpId = (a, b) => {
+                if (isNum(a) && isNum(b)) return Math.sign(Number(a) - Number(b));
+                if (isNum(a)) return -1;
+                if (isNum(b)) return 1;
+                return a < b ? -1 : a > b ? 1 : 0;
+              };
+              const cmp = (x, y) => {
+                const a = parse(x), b = parse(y);
+                for (let i = 0; i < 3; i++) if (a.n[i] !== b.n[i]) return a.n[i] > b.n[i] ? 1 : -1;
+                if (!a.pre.length && !b.pre.length) return 0;
+                if (!a.pre.length) return 1;
+                if (!b.pre.length) return -1;
+                for (let i = 0; i < Math.max(a.pre.length, b.pre.length); i++) {
+                  if (a.pre[i] === undefined) return -1;
+                  if (b.pre[i] === undefined) return 1;
+                  const c = cmpId(a.pre[i], b.pre[i]);
+                  if (c !== 0) return c;
+                }
+                return 0;
+              };
+              console.log(cmp(process.argv[1], process.argv[2]) > 0 ? "greater" : "not-greater");
+            ' "$PKG_VERSION" "$latest")"
+            if [ "$result" = greater ]; then
+              reason="$PKG_VERSION is greater than the current latest $latest."
+            else
+              reason="$PKG_VERSION is not greater than the current latest $latest."
+            fi
+          fi
+
+          case "$result" in
+            greater)
+              tag=latest
+              npm publish
+              ;;
+            not-greater)
+              major_minor="${PKG_VERSION%%.*}.$(echo "$PKG_VERSION" | cut -d. -f2)"
+              tag="maint-$major_minor"
+              [[ "$tag" =~ ^maint-[0-9]+\.[0-9]+$ ]] || fail "Refusing to publish: computed dist-tag '$tag' is malformed."
+              npm publish --tag "$tag"
+              ;;
+            *)
+              fail "Unexpected comparison result '$result'. Not publishing."
+              ;;
+          esac
+
+          {
+            echo "### npm publish"
+            echo "- Package: \`$pkg_name\` version \`$PKG_VERSION\`"
+            echo "- Dist-tag: \`$tag\`"
+            echo "- Why: $reason"
+          } >> "$GITHUB_STEP_SUMMARY"
         env:
+          PKG_VERSION: ${{ steps.version.outputs.versionWithoutV }}
+          REGISTRY: https://npm.pkg.github.com
           GITHUB_PACKAGE_TOKEN: ${{ secrets.GITHUB_PACKAGE_TOKEN }}
           NODE_AUTH_TOKEN: ${{ secrets.GITHUB_PACKAGE_TOKEN }}
+
