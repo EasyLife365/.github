@@ -173,7 +173,7 @@ jobs:
       # publishable under `maint-<MAJOR>.<MINOR>` without it ever becoming `latest`:
       #
       #   - greater than latest, release version  -> plain `npm publish` (becomes latest)
-      #   - greater than latest, pre-release (-)  -> `--tag next`
+      #   - greater than latest, pre-release (-)  -> `--tag next`, same release-of-the-tag condition
       #   - equal or lower than latest            -> `--tag maint-<MAJOR>.<MINOR>`, but ONLY for a run
       #     started by a GitHub release of the tag vX.Y.N being published (a workflow_dispatch of any
       #     branch must not publish feature code under a maint tag)
@@ -183,8 +183,8 @@ jobs:
       # A re-release of an older patch moves `maint-X.Y` backwards; that is accepted. A registry lookup
       # that fails for any other reason fails the job: nothing is published under a guessed tag.
       #
-      # GITHUB_EVENT_NAME, GITHUB_REF_TYPE and GITHUB_REF_NAME are runner defaults and describe the
-      # caller's event inside a reusable workflow. The comparison is dependency-free (node only, no
+      # The event, ref type and ref name come from the github context (the caller's event inside a
+      # reusable workflow) through env:. The comparison is dependency-free (node only, no
       # download in a publishing job) and follows SemVer 2.0.0 section 11. Build metadata cannot occur:
       # the validation rejects `+`. Values reach the shell only through env: and are validated first.
       - name: Publish packages
@@ -196,6 +196,23 @@ jobs:
           # Control characters are stripped from everything echoed into a workflow command.
           clean() { printf '%s' "$1" | tr -d '\000-\037\177'; }
           fail() { echo "::error::$(clean "$1")"; exit 1; }
+
+          # Only a GitHub release of the tag vPKG_VERSION may publish under a non-latest tag. The three
+          # EL_* values are the caller's event, passed in through env: (not the GITHUB_* runner variables,
+          # which an earlier step could in principle override through $GITHUB_ENV).
+          require_release_of_tag() {
+            if [[ "$EL_EVENT_NAME" != release || "$EL_REF_TYPE" != tag || "$EL_REF_NAME" != "v$PKG_VERSION" ]]; then
+              fail "$1 A hotfix or pre-release is published by a release of its vX.Y.N tag (event release, ref v$PKG_VERSION); this run is event '$EL_EVENT_NAME', $EL_REF_TYPE '$EL_REF_NAME'. Not publishing."
+            fi
+          }
+
+          # Build scripts and prepack/prepublishOnly hooks ran since the version was set: publish only
+          # if package.json still carries the version the gate and the comparison reasoned about.
+          publish() {
+            actual="$(node -p "require('./package.json').version")"
+            [ "$actual" = "$PKG_VERSION" ] || fail "package.json says version '$actual' but $PKG_VERSION is being published. Not publishing."
+            npm publish "$@"
+          }
 
           version_re='^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$'
           name_re='^@easylife365/[a-z0-9._-]+$'
@@ -229,7 +246,7 @@ jobs:
 
           if [ -z "$latest" ]; then
             if [ "$patch" != 0 ]; then
-              fail "$pkg_name has no latest (package not visible to this token, a never-published line, or a package without latest) and $PKG_VERSION has PATCH > 0: a hotfix has PATCH > 0. Not publishing."
+              fail "$pkg_name has no latest and $PKG_VERSION has PATCH > 0 (a hotfix has PATCH > 0). Either the package is not visible to this token, or it is new: a new package starts at X.Y.0, so publish X.Y.0 first or publish by hand. Or it exists with only maint tags: set latest by hand once. Not publishing."
             fi
             result=greater
             reason="$pkg_name has no latest yet (first publish of $core)."
@@ -272,21 +289,20 @@ jobs:
           case "$result" in
             greater)
               if [[ "$PKG_VERSION" == *-* ]]; then
+                require_release_of_tag "$PKG_VERSION is a pre-release and would be published under next."
                 tag=next
                 reason="$reason It is a pre-release, so it is published under next and never becomes latest."
-                npm publish --tag next
+                publish --tag next
               else
                 tag=latest
-                npm publish
+                publish
               fi
               ;;
             not-greater)
-              if [[ "$GITHUB_EVENT_NAME" != release || "$GITHUB_REF_TYPE" != tag || "$GITHUB_REF_NAME" != "v$PKG_VERSION" ]]; then
-                fail "$PKG_VERSION is not greater than the current latest $latest. A hotfix is published by a release of its vX.Y.N tag (event release, ref v$PKG_VERSION); this run is event '$GITHUB_EVENT_NAME', $GITHUB_REF_TYPE '$GITHUB_REF_NAME'. Not publishing."
-              fi
+              require_release_of_tag "$PKG_VERSION is not greater than the current latest $latest."
               tag="maint-$major.$minor"
               [[ "$tag" =~ ^maint-[0-9]+\.[0-9]+$ ]] || fail "Refusing to publish: computed dist-tag '$tag' is malformed."
-              npm publish --tag "$tag"
+              publish --tag "$tag"
               ;;
             *)
               fail "Unexpected comparison result '$result'. Not publishing."
@@ -301,5 +317,8 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
         env:
           PKG_VERSION: ${{ steps.version.outputs.versionWithoutV }}
+          EL_EVENT_NAME: ${{ github.event_name }}
+          EL_REF_TYPE: ${{ github.ref_type }}
+          EL_REF_NAME: ${{ github.ref_name }}
           GITHUB_PACKAGE_TOKEN: ${{ secrets.GITHUB_PACKAGE_TOKEN }}
           NODE_AUTH_TOKEN: ${{ secrets.GITHUB_PACKAGE_TOKEN }}
