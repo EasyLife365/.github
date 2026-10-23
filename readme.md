@@ -20,7 +20,6 @@ Every repository calls these rather than copying the steps, so a fix lands once.
 | `ci_wcag_check.yml` | Accessibility check that blocks merge in React Components |
 | `spa_build.yml`, `spa_deploy.yml` | Build and deploy a single-page app |
 | `release_nuget_packages.yml` | Publish NuGet packages |
-| `create_maintenance_branch.yml` | Cut a maintenance branch |
 | `hotfix_branch.yml` | Create `hotfix/vX.Y.N` from the tag that runs on a ring |
 | `azure-storage-sync.yml` | Sync blob storage between rings |
 | **`pr_compliance.yml`** | **Deterministic pull request checks — the facts** |

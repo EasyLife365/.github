@@ -21,8 +21,8 @@ name: Hotfix Branch
 # It never creates a tag and never deletes anything. A person tags the branch tip after the fix is
 # merged and deploys; the Lead Architect deletes the branch after tagging.
 #
-# Replaces create_maintenance_branch.yml (vX.Y.x branches), which stays until no repository calls
-# it. Caller, file hotfix-branch.yml, run from main:
+# Replaces the retired create_maintenance_branch.yml (vX.Y.x branches). Caller, file
+# hotfix-branch.yml, run from main:
 #
 #   on:
 #     workflow_dispatch:
