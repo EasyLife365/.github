@@ -195,7 +195,21 @@ jobs:
           ref: ${{ inputs.checkout-ref || github.sha }}
           persist-credentials: false
 
-      - uses: actions/setup-dotnet@v6
+      # The dotnet download CDN fails transiently (HTTP 409); retry once before failing the job.
+      - name: Setup .NET
+        id: setup-dotnet
+        continue-on-error: true
+        uses: actions/setup-dotnet@v6
+        with:
+          dotnet-version: ${{ inputs.dotnet-version }}
+
+      - name: Setup .NET (retry)
+        if: steps.setup-dotnet.outcome == 'failure'
+        run: sleep 30
+
+      - name: Setup .NET (retry)
+        if: steps.setup-dotnet.outcome == 'failure'
+        uses: actions/setup-dotnet@v6
         with:
           dotnet-version: ${{ inputs.dotnet-version }}
 
@@ -341,7 +355,21 @@ jobs:
             tools
           persist-credentials: false
 
-      - uses: actions/setup-dotnet@v6
+      # The dotnet download CDN fails transiently (HTTP 409); retry once before failing the job.
+      - name: Setup .NET
+        id: setup-dotnet
+        continue-on-error: true
+        uses: actions/setup-dotnet@v6
+        with:
+          dotnet-version: ${{ inputs.dotnet-version }}
+
+      - name: Setup .NET (retry)
+        if: steps.setup-dotnet.outcome == 'failure'
+        run: sleep 30
+
+      - name: Setup .NET (retry)
+        if: steps.setup-dotnet.outcome == 'failure'
+        uses: actions/setup-dotnet@v6
         with:
           dotnet-version: ${{ inputs.dotnet-version }}
 
