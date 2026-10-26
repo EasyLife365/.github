@@ -189,7 +189,20 @@ jobs:
           df -h / | tail -1
           sudo setsid nohup bash -c 'rm -rf /usr/local/lib/android /opt/ghc /usr/local/share/boost /usr/share/swift /opt/hostedtoolcache/CodeQL /usr/local/.ghcup; docker image prune -af' > /dev/null 2>&1 &
 
+      # The dotnet download CDN fails transiently (HTTP 409); retry once before failing the job.
       - name: Setup .NET
+        id: setup-dotnet
+        continue-on-error: true
+        uses: actions/setup-dotnet@v6
+        with:
+          dotnet-version: ${{ inputs.dotnet-version }}
+
+      - name: Setup .NET (retry)
+        if: steps.setup-dotnet.outcome == 'failure'
+        run: sleep 30
+
+      - name: Setup .NET (retry)
+        if: steps.setup-dotnet.outcome == 'failure'
         uses: actions/setup-dotnet@v6
         with:
           dotnet-version: ${{ inputs.dotnet-version }}
