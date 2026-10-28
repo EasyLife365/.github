@@ -42,6 +42,11 @@ name: Security gate
 # and the format of that file are described in the "Security gate" section of this repository's readme.
 #
 # Stage 0a of the upgrade plan introduces it as a visible check; Stage 2 makes it required.
+#
+# A draft pull request is skipped: every job below is skipped while github.event.pull_request.draft is true, so a
+# draft that is pushed to often does not spend minutes. The caller must therefore also trigger on ready_for_review
+# (types: [opened, synchronize, reopened, ready_for_review]), or a pull request marked ready would keep the
+# skipped, passing result and merge unscanned. A merge queue, schedule or manual run has no pull request, so it runs.
 
 on:
   workflow_call:
@@ -111,6 +116,7 @@ permissions:
 jobs:
   secret-scan:
     name: Secret scan
+    if: github.event.pull_request.draft != true
     runs-on: ubuntu-latest
     steps:
       - name: Refuse checkout-ref for anyone but an allow-listed bot
@@ -175,7 +181,7 @@ jobs:
 
   dotnet-dependencies:
     name: .NET dependencies
-    if: inputs.dotnet-solution != ''
+    if: inputs.dotnet-solution != '' && github.event.pull_request.draft != true
     runs-on: ubuntu-latest
     env:
       GITHUB_PACKAGE_USER_NAME: github-actions
@@ -226,7 +232,7 @@ jobs:
 
   node-dependencies:
     name: npm dependencies
-    if: inputs.node
+    if: inputs.node && github.event.pull_request.draft != true
     runs-on: ubuntu-latest
     env:
       # --ignore-scripts below already stops a malicious lockfile entry from running a postinstall
@@ -325,7 +331,7 @@ jobs:
   # request as review-relevant.
   dotnet-licences:
     name: .NET licences
-    if: inputs.licence-check && inputs.dotnet-solution != ''
+    if: inputs.licence-check && inputs.dotnet-solution != '' && github.event.pull_request.draft != true
     runs-on: ubuntu-latest
     continue-on-error: ${{ !inputs.licence-enforce }}
     steps:
@@ -436,7 +442,7 @@ jobs:
 
   node-licences:
     name: npm licences
-    if: inputs.licence-check && inputs.node
+    if: inputs.licence-check && inputs.node && github.event.pull_request.draft != true
     runs-on: ubuntu-latest
     continue-on-error: ${{ !inputs.licence-enforce }}
     steps:
