@@ -88,3 +88,41 @@ jobs:
           cutoff=$(date -u -d "${RETENTION_DAYS} days ago" '+%Y-%m-%dT00:00Z')
           echo "Deleting blobs in ${{ inputs.azure-storage-folder }} not modified since $cutoff (retention: ${RETENTION_DAYS} days)"
           az storage blob delete-batch --account-name ${{ inputs.azure-storage-account }} -s ${{ inputs.azure-storage-folder }} --if-unmodified-since "$cutoff"
+
+      - name: Get deployment token of the primary Static Web App
+        id: primary-token
+        if: ${{ inputs.primary-app-name != '' }}
+        env:
+          APP_NAME: ${{ inputs.primary-app-name }}
+        run: |
+          token=$(az staticwebapp secrets list -n "$APP_NAME" --query 'properties.apiKey' -o tsv)
+          echo "::add-mask::$token"
+          echo "token=$token" >> "$GITHUB_OUTPUT"
+
+      - name: Deploy the merged build to the primary Static Web App
+        if: ${{ inputs.primary-app-name != '' }}
+        uses: Azure/static-web-apps-deploy@v1
+        with:
+          azure_static_web_apps_api_token: ${{ steps.primary-token.outputs.token }}
+          action: "upload"
+          app_location: ${{ inputs.app-location }}/build_final
+          skip_app_build: "true"
+
+      - name: Get deployment token of the secondary Static Web App
+        id: secondary-token
+        if: ${{ inputs.secondary-app-name != '' }}
+        env:
+          APP_NAME: ${{ inputs.secondary-app-name }}
+        run: |
+          token=$(az staticwebapp secrets list -n "$APP_NAME" --query 'properties.apiKey' -o tsv)
+          echo "::add-mask::$token"
+          echo "token=$token" >> "$GITHUB_OUTPUT"
+
+      - name: Deploy the merged build to the secondary Static Web App
+        if: ${{ inputs.secondary-app-name != '' }}
+        uses: Azure/static-web-apps-deploy@v1
+        with:
+          azure_static_web_apps_api_token: ${{ steps.secondary-token.outputs.token }}
+          action: "upload"
+          app_location: ${{ inputs.app-location }}/build_final
+          skip_app_build: "true"
