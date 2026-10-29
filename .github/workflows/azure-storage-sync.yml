@@ -32,6 +32,16 @@ on:
         required: false
         type: number
         default: 90
+      primary-app-name:
+        description: Primary Azure Static Web App to deploy the merged build to in this same job, so one environment approval covers the sync and the deployment (optional, nothing is deployed without it)
+        required: false
+        type: string
+        default: ''
+      secondary-app-name:
+        description: Secondary Azure Static Web App to deploy the merged build to (optional, used with primary-app-name)
+        required: false
+        type: string
+        default: ''
 
 permissions:
   id-token: write
@@ -40,7 +50,7 @@ permissions:
 jobs:
   sync-azure-storage:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 30
     environment: ${{ inputs.environment }}
 
     steps:
@@ -78,6 +88,46 @@ jobs:
           name: ${{ inputs.artifact-output }}
           path: ${{ inputs.app-location }}/build_final
           retention-days: 5
+
+      - name: Get deployment token of the primary Static Web App
+        id: primary-token
+        if: ${{ inputs.primary-app-name != '' }}
+        env:
+          APP_NAME: ${{ inputs.primary-app-name }}
+        run: |
+          token=$(az staticwebapp secrets list -n "$APP_NAME" --query 'properties.apiKey' -o tsv)
+          [ -n "$token" ] || { echo "::error::No deployment token for $APP_NAME"; exit 1; }
+          echo "::add-mask::$token"
+          echo "token=$token" >> "$GITHUB_OUTPUT"
+
+      - name: Deploy the merged build to the primary Static Web App
+        if: ${{ inputs.primary-app-name != '' }}
+        uses: Azure/static-web-apps-deploy@v1
+        with:
+          azure_static_web_apps_api_token: ${{ steps.primary-token.outputs.token }}
+          action: "upload"
+          app_location: ${{ inputs.app-location }}/build_final
+          skip_app_build: "true"
+
+      - name: Get deployment token of the secondary Static Web App
+        id: secondary-token
+        if: ${{ inputs.secondary-app-name != '' }}
+        env:
+          APP_NAME: ${{ inputs.secondary-app-name }}
+        run: |
+          token=$(az staticwebapp secrets list -n "$APP_NAME" --query 'properties.apiKey' -o tsv)
+          [ -n "$token" ] || { echo "::error::No deployment token for $APP_NAME"; exit 1; }
+          echo "::add-mask::$token"
+          echo "token=$token" >> "$GITHUB_OUTPUT"
+
+      - name: Deploy the merged build to the secondary Static Web App
+        if: ${{ inputs.secondary-app-name != '' }}
+        uses: Azure/static-web-apps-deploy@v1
+        with:
+          azure_static_web_apps_api_token: ${{ steps.secondary-token.outputs.token }}
+          action: "upload"
+          app_location: ${{ inputs.app-location }}/build_final
+          skip_app_build: "true"
 
       # The retention window goes through an env var rather than being interpolated
       # straight into the command line, so the value cannot extend the shell command.
