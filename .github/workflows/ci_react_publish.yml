@@ -31,6 +31,9 @@ permissions:
 jobs:
   run-tests:
     runs-on: ubuntu-latest
+    env:
+      # Same heap as ci_react_build.yml, so a release builds whenever its pull request built.
+      NODE_OPTIONS: --max-old-space-size=4096
 
     steps:
       - uses: actions/checkout@v7
