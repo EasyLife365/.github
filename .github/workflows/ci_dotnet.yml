@@ -4,6 +4,12 @@ on:
   workflow_call:
 
     inputs:
+      skip:
+        description: 'Skip the whole job. The job still reports under its usual name as skipped, which counts as passing for a required check, and bills nothing. A caller sets it from a changed-paths job on a pull request that cannot affect this job; the merge queue should leave it false.'
+        required: false
+        type: boolean
+        default: false
+
       dotnet-version:
         required: false
         type: string
@@ -151,6 +157,7 @@ permissions:
 
 jobs:
   run-tests:
+    if: ${{ !inputs.skip }}
     timeout-minutes: ${{ inputs.timeout-minutes }}
     # Pinned, not ubuntu-latest: that label moved to 26.04, and packages.microsoft.com has no
     # azure-functions-core-tools-4 for it (apt: "Unable to locate package"), which breaks the
