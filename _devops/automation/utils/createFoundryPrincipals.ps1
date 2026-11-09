@@ -89,9 +89,7 @@ param(
         'EasyLife365-Agents'
         'EasyLife-Approvals'
         'EasyMeet365'
-        'EasyLife-React-Auth'
-        'EasyLife-React-Components'
-        'EasyLife-React-Core'
+        'EasyLife365-React'
         '.github'
     ),
 
