@@ -183,11 +183,35 @@ jobs:
       # not github.event.pull_request.*, which would be unset and silently collapse this to '' --
       # a full scan instead of a diff, same as no restriction at all.
       - name: Scan for secrets
+        id: scan
         uses: trufflesecurity/trufflehog@main
         with:
           base: ${{ (github.event_name == 'merge_group' && !inputs.full-history) && github.event.merge_group.base_sha || (((github.event_name == 'pull_request' || github.event_name == 'pull_request_target') && !inputs.full-history) && github.event.pull_request.base.sha) || '' }}
           head: ${{ (github.event_name == 'merge_group' && !inputs.full-history) && github.event.merge_group.head_sha || (((github.event_name == 'pull_request' || github.event_name == 'pull_request_target') && !inputs.full-history) && github.event.pull_request.head.sha) || '' }}
           extra_args: --results=verified,unknown ${{ steps.exclude.outputs.args }}
+
+      # The action above prints each finding as one generic annotation (it runs with
+      # --github-actions), which names neither the file, the line nor the commit, so a failed scan
+      # could only be diagnosed by running TruffleHog locally. On a failure, run the same scan again
+      # and print where each finding is. Only the detector, whether it is verified, the path, the
+      # line and the commit are printed -- never the matched value (Raw), so the log cannot leak it.
+      # The scan result goes through jq, never into a shell command or a workflow command.
+      - name: List where the secret scan found something
+        if: failure() && steps.scan.outcome == 'failure'
+        env:
+          BASE: ${{ (github.event_name == 'merge_group' && !inputs.full-history) && github.event.merge_group.base_sha || (((github.event_name == 'pull_request' || github.event_name == 'pull_request_target') && !inputs.full-history) && github.event.pull_request.base.sha) || '' }}
+          HEAD: ${{ (github.event_name == 'merge_group' && !inputs.full-history) && github.event.merge_group.head_sha || (((github.event_name == 'pull_request' || github.event_name == 'pull_request_target') && !inputs.full-history) && github.event.pull_request.head.sha) || '' }}
+          ARGS: ${{ steps.exclude.outputs.args }}
+        run: |
+          scope=()
+          [ -n "$BASE" ] && scope+=(--since-commit "$(git rev-parse "$BASE")")
+          [ -n "$HEAD" ] && scope+=(--branch "$(git rev-parse "$HEAD")")
+          echo "Findings: count, detector, state, path, line, commit. A path that only looks like a secret goes into .trufflehogignore on the default branch."
+          # ARGS is one --exclude-paths=<file> option or empty, so it is left unquoted on purpose.
+          docker run --rm -v "$PWD":/tmp -w /tmp ghcr.io/trufflesecurity/trufflehog:latest \
+            git file:///tmp/ "${scope[@]}" --no-update --json --results=verified,unknown $ARGS 2>/dev/null \
+            | jq -r 'select(.SourceMetadata.Data.Git != null) | .SourceMetadata.Data.Git as $g | [.DetectorName, (if .Verified then "verified" else "unverified" end), $g.file, ("line " + ($g.line | tostring)), $g.commit[0:8]] | @tsv' \
+            | sort | uniq -c | head -200 || true
 
   dotnet-dependencies:
     name: .NET dependencies
