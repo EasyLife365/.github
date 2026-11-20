@@ -60,7 +60,7 @@ on:
        type: string
        default: ''
      timeout-minutes:
-       description: 'Job timeout in minutes. The build scripts run the check gate, unit tests included, before vite build, so this is not a bundle-only step. The default is about 2.3 times the slowest build over 30 days (Collaboration Cockpit, 10.9 min; P90 10.3 min) and leaves room for a runner 1.6 times slower (EasyLife365/.github#187). Raise it for an app that is legitimately slower; a hung build still fails at the limit instead of holding the runner for six hours.'
+       description: 'Job timeout in minutes. A caller''s build script can run its check gate, unit tests included, before vite build, so this is not a bundle-only step. The default is about 2.3 times the slowest build over 30 days (Collaboration Cockpit, 10.9 min; P90 10.3 min) and leaves room for a runner 1.6 times slower (EasyLife365/.github#187). Raise it for an app that is legitimately slower; a hung build still fails at the limit instead of holding the runner for six hours.'
        required: false
        type: number
        default: 25
