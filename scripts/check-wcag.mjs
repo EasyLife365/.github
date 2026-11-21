@@ -65,13 +65,18 @@ if (files.length === 0) {
 }
 
 let totalViolations = 0;
+let unreadable = 0;
 
 for (const file of files) {
   const filePath = resolve(file);
   let content;
   try {
     content = readFileSync(filePath, "utf-8");
-  } catch {
+  } catch (error) {
+    // A path that cannot be read was never checked, so it fails the run instead of passing
+    // silently (EasyLife365/.github#191).
+    unreadable++;
+    console.error(`FAIL ${file} could not be read, so it was not checked: ${error.code ?? error.message}`);
     continue;
   }
 
@@ -86,8 +91,9 @@ for (const file of files) {
   }
 }
 
-if (totalViolations > 0) {
-  console.error(`\nWCAG check failed: ${totalViolations} violation(s) found.`);
+if (totalViolations > 0 || unreadable > 0) {
+  const unreadableText = unreadable > 0 ? `, ${unreadable} file(s) could not be read` : "";
+  console.error(`\nWCAG check failed: ${totalViolations} violation(s) found${unreadableText}.`);
   process.exit(1);
 }
 
