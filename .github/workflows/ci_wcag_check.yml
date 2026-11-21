@@ -42,7 +42,7 @@ jobs:
       # credential this checkout persists to authenticate it, or it fails with "could not read
       # Username for 'https://github.com'" -- confirmed live, this job broke for every caller the
       # moment persist-credentials: false was added here. Safe to leave persisted: this job's own
-      # permissions are contents: read only (line 22-23) -- no checks:write or pull-requests:write
+      # permissions are contents: read only (top of this file) -- no checks:write or pull-requests:write
       # to forge, unlike ci_dotnet.yml/ci_react_unit_tests.yml/ci_react_storybook_tests.yml, where
       # persist-credentials: false actually closes something.
       - uses: actions/checkout@v7
@@ -54,9 +54,15 @@ jobs:
         with:
           node-version: ${{ inputs.node-version }}
 
+      # No --depth here: the checkout above is a full clone, and a --depth fetch into a full clone
+      # makes it shallow again, cutting the parents of the fetched base tip. When the base branch
+      # moved after GitHub built the PR merge commit, origin/<base> and HEAD then shared no commit
+      # and the diff below stopped with "no merge base" (exit 128, EasyLife365/.github#189).
       - name: Fetch base branch
         if: ${{ github.event_name == 'pull_request' || github.event_name == 'pull_request_target' }}
-        run: git fetch origin ${{ github.base_ref }} --depth=1
+        env:
+          BASE_REF: ${{ github.base_ref }}
+        run: git fetch --no-tags origin "+refs/heads/${BASE_REF}:refs/remotes/origin/${BASE_REF}"
 
       - name: Checkout shared WCAG script
         uses: actions/checkout@v7
@@ -71,33 +77,67 @@ jobs:
 
       - name: Run WCAG check on changed files
         shell: bash
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          BASE_REF: ${{ github.base_ref }}
+          MERGE_GROUP_BASE_SHA: ${{ github.event.merge_group.base_sha }}
+          BEFORE_SHA: ${{ github.event.before }}
         run: |
           set -euo pipefail
 
-          if [ "${{ github.event_name }}" = "pull_request" ] || [ "${{ github.event_name }}" = "pull_request_target" ]; then
-            DIFF_RANGE="origin/${{ github.base_ref }}...HEAD"
-          elif [ "${{ github.event_name }}" = "merge_group" ]; then
-            # merge_group.base_sha is a real commit, not a branch name -- no "Fetch base branch"
-            # step needed for it, unlike pull_request/pull_request_target above: fetch-depth: 0 on
-            # the checkout already has this ancestor commit, since it's on the default branch.
-            DIFF_RANGE="${{ github.event.merge_group.base_sha }}...HEAD"
-          elif [ "${{ github.event_name }}" = "push" ]; then
-            BEFORE_SHA="${{ github.event.before }}"
-            if [ -z "$BEFORE_SHA" ] || [ "$BEFORE_SHA" = "0000000000000000000000000000000000000000" ]; then
-              if git rev-parse --verify HEAD~1 >/dev/null 2>&1; then
-                DIFF_RANGE="HEAD~1...HEAD"
-              else
-                DIFF_RANGE="HEAD"
-              fi
-            else
-              DIFF_RANGE="$BEFORE_SHA...HEAD"
+          # BASE is the commit the changes are measured from; the files checked are those changed
+          # between the merge base of BASE and HEAD, and HEAD (what "BASE...HEAD" means).
+          BASE=""
+          if [ "$EVENT_NAME" = "pull_request" ] || [ "$EVENT_NAME" = "pull_request_target" ]; then
+            BASE="origin/$BASE_REF"
+          elif [ "$EVENT_NAME" = "merge_group" ]; then
+            # merge_group.base_sha is a real commit on the default branch, which the full checkout
+            # (fetch-depth: 0) already holds: no "Fetch base branch" step needed for it.
+            BASE="$MERGE_GROUP_BASE_SHA"
+          elif [ "$EVENT_NAME" = "push" ]; then
+            if [ -n "$BEFORE_SHA" ] && [ "$BEFORE_SHA" != "0000000000000000000000000000000000000000" ]; then
+              BASE="$BEFORE_SHA"
+            elif git rev-parse --verify --quiet HEAD~1 >/dev/null; then
+              BASE="HEAD~1"
             fi
           else
-            echo "Unsupported event: ${{ github.event_name }}"
+            echo "Unsupported event: $EVENT_NAME"
             exit 1
           fi
 
-          FILES=$(git diff --name-only --diff-filter=d "$DIFF_RANGE" -- 'src/**/*.tsx' 'src/**/*.css' | tr '\n' ' ')
+          # git's own message on a failed merge-base is kept in $MERGE_BASE_ERR for the warning below
+          # (a file, because find_merge_base runs in a command substitution's subshell).
+          MERGE_BASE_ERR=$(mktemp)
+          find_merge_base() { git merge-base --end-of-options "$BASE" HEAD 2>"$MERGE_BASE_ERR"; }
+
+          MERGE_BASE=""
+          if [ -n "$BASE" ]; then
+            MERGE_BASE=$(find_merge_base) || MERGE_BASE=""
+            if [ -z "$MERGE_BASE" ] && [ "$(git rev-parse --is-shallow-repository)" = "true" ]; then
+              echo "No merge base between $BASE and HEAD in a shallow history; fetching the full history."
+              git fetch --no-tags --unshallow origin || true
+              MERGE_BASE=$(find_merge_base) || MERGE_BASE=""
+            fi
+          fi
+
+          if [ -n "$MERGE_BASE" ]; then
+            echo "Checking files changed since $MERGE_BASE (merge base of $BASE and HEAD)."
+            FILES=$(git diff --name-only --diff-filter=d "$MERGE_BASE" HEAD -- 'src/**/*.tsx' 'src/**/*.css' | tr '\n' ' ')
+          else
+            # Never fail on git history: no base commit (a first commit) or no merge base (base
+            # commit gone after a force push, unrelated histories) means "changed files" cannot be
+            # known, so every TSX/CSS file is checked instead. Stricter, never weaker.
+            if [ -z "$BASE" ]; then
+              REASON="There is no base commit to compare with (a first commit)"
+            else
+              REASON="No merge base found between '$BASE' and HEAD"
+            fi
+            echo "::warning title=WCAG check::$REASON, so the changed files cannot be worked out. Checking every src TSX/CSS file instead."
+            if [ -s "$MERGE_BASE_ERR" ]; then
+              echo "git merge-base said: $(head -c 300 "$MERGE_BASE_ERR" | tr '\n' ' ')"
+            fi
+            FILES=$(git ls-files -- 'src/**/*.tsx' 'src/**/*.css' | tr '\n' ' ')
+          fi
 
           if [ -z "${FILES// }" ]; then
             echo "No changed TSX/CSS files to check."
