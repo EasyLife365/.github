@@ -176,7 +176,7 @@ jobs:
        env:
          GITHUB_PACKAGE_TOKEN: ${{ (inputs.checkout-ref != '' && secrets.package-token-readonly) || secrets.package-token }}
 
-     - uses: EasyLife365/get-version-action@v1.2.0
+     - uses: EasyLife365/get-version-action@v1.2.2
        id: version
 
      - name: Set version (npm)

@@ -33,7 +33,7 @@ jobs:
           fetch-depth: 0
           fetch-tags: true
 
-      - uses: EasyLife365/get-version-action@v1.2.0
+      - uses: EasyLife365/get-version-action@v1.2.2
         id: version
 
       # The dotnet download CDN fails transiently (HTTP 409); retry once before failing the job.

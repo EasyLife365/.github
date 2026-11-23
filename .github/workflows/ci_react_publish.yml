@@ -99,7 +99,7 @@ jobs:
         env:
           GITHUB_PACKAGE_TOKEN: ${{ secrets.GITHUB_PACKAGE_TOKEN }}
 
-      - uses: EasyLife365/get-version-action@v1.2.0
+      - uses: EasyLife365/get-version-action@v1.2.2
         if: ${{ inputs.publish }}
         id: version
 
