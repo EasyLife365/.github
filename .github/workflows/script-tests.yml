@@ -9,13 +9,9 @@ on:
       - 'scripts/**'
       - 'licence-policy/**'
       - 'tools/**'
-      - '.github/workflows/security_gate.yml'
-      - '.github/workflows/script-tests.yml'
-      # wcag-workflow.test.mjs runs the checkout-ref gate of these and the WCAG step from the YAML.
-      - '.github/workflows/ci_wcag_check.yml'
-      - '.github/workflows/ci_dotnet.yml'
-      - '.github/workflows/ci_react_*.yml'
-      - '.github/workflows/spa_build.yml'
+      # Every workflow: security_gate.yml is tested below, and wcag-workflow.test.mjs reads every
+      # workflow file (the checkout-ref gate copies and the WCAG step).
+      - '.github/workflows/**'
 
 permissions:
   contents: read

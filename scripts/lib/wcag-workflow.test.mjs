@@ -12,29 +12,49 @@ import { fileURLToPath } from 'node:url';
 const root = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
 const workflows = join(root, '.github', 'workflows');
 
-// Every run: block of every step called `name` in a workflow file, dedented.
-function runBlocks(file, name) {
+const indentOf = (l) => l.match(/^ */)[0].length;
+const dedent = (lines) => {
+  const min = Math.min(...lines.filter((l) => l.trim()).map(indentOf));
+  return lines.map((l) => l.slice(min));
+};
+
+// Every step called `name` in a workflow file: the whole step (`text`, dedented: name, if, env and
+// run), its env: keys and its run: | block. A step without a literal `run: |` block fails.
+function steps(file, name) {
   const lines = readFileSync(file, 'utf8').split(/\r?\n/);
-  const blocks = [];
-  const indentOf = (l) => l.match(/^ */)[0].length;
+  const found = [];
   for (let i = 0; i < lines.length; i++) {
-    const step = lines[i].match(/^( *)- name: (.*)$/);
-    if (!step || step[2].trim() !== name) continue;
-    const stepIndent = step[1].length;
-    let j = i + 1;
-    while (j < lines.length && !/^ *run: \|\s*$/.test(lines[j])) j++;
-    const runIndent = indentOf(lines[j]);
-    assert.ok(runIndent > stepIndent, `run: of "${name}" in ${file}`);
-    const body = [];
-    for (j++; j < lines.length; j++) {
-      if (lines[j].trim() !== '' && indentOf(lines[j]) <= runIndent) break;
-      body.push(lines[j]);
+    const head = lines[i].match(/^( *)- name: (.*)$/);
+    if (!head || head[2].trim() !== name) continue;
+    const stepIndent = head[1].length;
+    let end = i + 1;
+    while (end < lines.length && (lines[end].trim() === '' || indentOf(lines[end]) > stepIndent)) end++;
+    const step = lines.slice(i, end);
+    while (step.length && step[step.length - 1].trim() === '') step.pop();
+
+    const runAt = step.findIndex((l) => /^ *run: \|\s*$/.test(l));
+    assert.ok(runAt > 0, `"${name}" in ${file} has no literal "run: |" block`);
+    const run = dedent(step.slice(runAt + 1)).join('\n') + '\n';
+
+    const envAt = step.findIndex((l) => /^ *env:\s*$/.test(l));
+    const env = [];
+    if (envAt > 0) {
+      for (let j = envAt + 1; j < step.length && indentOf(step[j]) > indentOf(step[envAt]); j++) {
+        const key = step[j].match(/^ *([A-Za-z_][A-Za-z0-9_]*):/);
+        if (key) env.push(key[1]);
+      }
     }
-    while (body.length && body[body.length - 1].trim() === '') body.pop();
-    const min = Math.min(...body.filter((l) => l.trim()).map(indentOf));
-    blocks.push(body.map((l) => l.slice(min)).join('\n') + '\n');
+    found.push({ text: dedent(step).join('\n'), env, run });
   }
-  return blocks;
+  return found;
+}
+
+// git and bash run isolated from the machine's git configuration and from any GIT_* variable of
+// the outer repository, with their temp files inside a folder this test removes.
+function isolatedEnv(dir, extra = {}) {
+  const globalConfig = join(dir, 'gitconfig');
+  writeFileSync(globalConfig, '');
+  return { PATH: process.env.PATH, GIT_CONFIG_GLOBAL: globalConfig, GIT_CONFIG_NOSYSTEM: '1', TMPDIR: dir, ...extra };
 }
 
 function bash(script, env, cwd) {
@@ -42,7 +62,7 @@ function bash(script, env, cwd) {
   const file = join(dir, 'step.sh');
   writeFileSync(file, script);
   try {
-    return spawnSync('bash', [file], { cwd, env: { PATH: process.env.PATH, ...env }, encoding: 'utf8' });
+    return spawnSync('bash', [file], { cwd, env: isolatedEnv(dir, env), encoding: 'utf8' });
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
@@ -50,40 +70,46 @@ function bash(script, env, cwd) {
 
 const GATE = 'Refuse checkout-ref for anyone but an allow-listed bot';
 
-test('every copy of the checkout-ref gate is the same script', () => {
+test('every copy of the checkout-ref gate is the same step: if, env and run', () => {
   const copies = [];
   for (const f of readdirSync(workflows).filter((n) => n.endsWith('.yml'))) {
-    for (const b of runBlocks(join(workflows, f), GATE)) copies.push({ f, b });
+    for (const s of steps(join(workflows, f), GATE)) copies.push({ f, ...s });
   }
   assert.equal(copies.length, 11, copies.map((c) => c.f).join(', '));
-  for (const c of copies) assert.equal(c.b, copies[0].b, `${c.f} differs from ${copies[0].f}`);
-  assert.doesNotMatch(copies[0].b, /\$\{\{/);
+  for (const c of copies) assert.equal(c.text, copies[0].text, `${c.f} differs from ${copies[0].f}`);
+  assert.doesNotMatch(copies[0].run, /\$\{\{/);
+  assert.match(copies[0].text, /PR_AUTHOR: \$\{\{ github\.event\.pull_request\.user\.login \}\}/);
 });
 
 test('the gate accepts only a bot pull request from the repository, at its head commit', () => {
-  const [gate] = runBlocks(join(workflows, 'ci_wcag_check.yml'), GATE);
+  const [{ run: gate }] = steps(join(workflows, 'ci_wcag_check.yml'), GATE);
   const sha = 'a'.repeat(40);
   const ok = {
     CHECKOUT_REF: sha, EVENT_NAME: 'pull_request_target', ACTOR: 'dependabot[bot]',
     PR_AUTHOR: 'dependabot[bot]', PR_HEAD_SHA: sha, PR_HEAD_REPO: 'org/repo', REPOSITORY: 'org/repo',
   };
   const cases = [
-    [{}, 0],
-    [{ ACTOR: 'renovate[bot]', PR_AUTHOR: 'renovate[bot]' }, 0],
-    [{ PR_AUTHOR: 'mallory' }, 1],                                  // actor arranged to be the bot
-    [{ PR_HEAD_REPO: 'mallory/repo' }, 1],                          // branch in a fork
-    [{ PR_HEAD_REPO: '' }, 1],                                      // fork deleted
-    [{ ACTOR: 'alice' }, 1],                                        // a person pushed to the bot's branch
-    [{ EVENT_NAME: 'pull_request' }, 1],
-    [{ CHECKOUT_REF: 'main' }, 1],
-    [{ CHECKOUT_REF: '$(touch pwned)"; echo ::warning::x; #', PR_AUTHOR: 'alice' }, 1],
+    [{}, null],
+    [{ ACTOR: 'renovate[bot]', PR_AUTHOR: 'renovate[bot]' }, null],
+    [{ PR_AUTHOR: 'mallory' }, /opened by 'mallory'/],              // actor arranged to be the bot
+    [{ PR_HEAD_REPO: 'mallory/repo' }, /lives in 'mallory\/repo'/], // branch in a fork
+    [{ PR_HEAD_REPO: '' }, /lives in ''/],                          // fork deleted
+    [{ ACTOR: 'alice' }, /caused by 'alice'/],                      // a person pushed to the bot's branch
+    [{ EVENT_NAME: 'pull_request' }, /not pull_request_target/],
+    [{ CHECKOUT_REF: 'main' }, /not the head commit/],
+    [{ CHECKOUT_REF: '$(touch pwned)"; echo ::warning::x; #' }, /not the head commit/],
   ];
   const cwd = mkdtempSync(join(tmpdir(), 'wcag-gate-'));
   try {
-    for (const [change, status] of cases) {
+    for (const [change, reason] of cases) {
       const r = bash(gate, { ...ok, ...change }, cwd);
-      assert.equal(r.status, status, `${JSON.stringify(change)}: ${r.stdout}${r.stderr}`);
-      if (status) assert.match(r.stdout, /^::error::Refusing to check out checkout-ref: /);
+      const label = `${JSON.stringify(change)}: ${r.stdout}${r.stderr}`;
+      assert.equal(r.status, reason ? 1 : 0, label);
+      if (reason) {
+        assert.match(r.stdout, /^::error::Refusing to check out checkout-ref: /, label);
+        assert.match(r.stdout, reason, label);
+      }
+      assert.doesNotMatch(r.stdout + r.stderr, /^::warning::/m, label);
     }
     assert.deepEqual(readdirSync(cwd), [], 'no command from checkout-ref ran');
   } finally {
@@ -91,11 +117,25 @@ test('the gate accepts only a bot pull request from the repository, at its head 
   }
 });
 
+test('the WCAG step reads only variables its env: sets', () => {
+  const [step] = steps(join(workflows, 'ci_wcag_check.yml'), 'Run WCAG check on changed files');
+  const assigned = new Set([
+    ...[...step.run.matchAll(/^\s*([A-Z_][A-Z0-9_]*)=/gm)].map((m) => m[1]),
+    ...[...step.run.matchAll(/mapfile\b[^\n<]*\s([A-Z_][A-Z0-9_]*)\s*</g)].map((m) => m[1]),
+  ]);
+  const read = new Set([...step.run.matchAll(/\$\{?([A-Z_][A-Z0-9_]*)/g)].map((m) => m[1]));
+  const missing = [...read].filter((v) => !assigned.has(v) && !step.env.includes(v));
+  assert.deepEqual(missing, []);
+});
+
 test('the WCAG step checks files directly under src/ and names with a space or an umlaut', () => {
-  const [step] = runBlocks(join(workflows, 'ci_wcag_check.yml'), 'Run WCAG check on changed files');
+  const [{ run: step }] = steps(join(workflows, 'ci_wcag_check.yml'), 'Run WCAG check on changed files');
   const dir = mkdtempSync(join(tmpdir(), 'wcag-files-'));
+  const repo = join(dir, 'repo');
+  mkdirSync(repo);
+  const gitEnv = isolatedEnv(dir);
   const git = (...args) => {
-    const r = spawnSync('git', ['-c', 'core.autocrlf=false', ...args], { cwd: dir, encoding: 'utf8' });
+    const r = spawnSync('git', ['-c', 'core.autocrlf=false', '-c', 'commit.gpgsign=false', ...args], { cwd: repo, env: gitEnv, encoding: 'utf8' });
     assert.equal(r.status, 0, r.stderr);
     return r.stdout.trim();
   };
@@ -103,19 +143,19 @@ test('the WCAG step checks files directly under src/ and names with a space or a
     git('init', '-q');
     git('config', 'user.email', 'test@example.invalid');
     git('config', 'user.name', 'test');
-    mkdirSync(join(dir, 'src', 'components'), { recursive: true });
-    writeFileSync(join(dir, 'src', 'components', 'Ok.tsx'), 'export const Ok = () => <button aria-label="ok" />;\n');
+    mkdirSync(join(repo, 'src', 'components'), { recursive: true });
+    writeFileSync(join(repo, 'src', 'components', 'Ok.tsx'), 'export const Ok = () => <button aria-label="ok" />;\n');
     git('add', '.');
     git('commit', '-qm', 'base');
     const base = git('rev-parse', 'HEAD');
-    mkdirSync(join(dir, 'src', 'a b'));
-    writeFileSync(join(dir, 'src', 'Root.tsx'), 'export const Root = () => <input />;\n');
-    writeFileSync(join(dir, 'src', 'a b', 'ü.tsx'), 'export const U = () => <input />;\n');
-    writeFileSync(join(dir, 'src', 'components', 'Deep.tsx'), 'export const D = () => <input />;\n');
+    mkdirSync(join(repo, 'src', 'a b'));
+    writeFileSync(join(repo, 'src', 'Root.tsx'), 'export const Root = () => <input />;\n');
+    writeFileSync(join(repo, 'src', 'a b', 'ü.tsx'), 'export const U = () => <input />;\n');
+    writeFileSync(join(repo, 'src', 'components', 'Deep.tsx'), 'export const D = () => <input />;\n');
     git('add', '.');
     git('commit', '-qm', 'change');
-    mkdirSync(join(dir, '.shared-github', 'scripts'), { recursive: true });
-    copyFileSync(join(root, 'scripts', 'check-wcag.mjs'), join(dir, '.shared-github', 'scripts', 'check-wcag.mjs'));
+    mkdirSync(join(repo, '.shared-github', 'scripts'), { recursive: true });
+    copyFileSync(join(root, 'scripts', 'check-wcag.mjs'), join(repo, '.shared-github', 'scripts', 'check-wcag.mjs'));
 
     const expectAll = (r, count) => {
       assert.equal(r.status, 1, r.stdout + r.stderr);
@@ -126,9 +166,9 @@ test('the WCAG step checks files directly under src/ and names with a space or a
       assert.match(r.stderr, /3 violation\(s\) found\.$/m);
     };
     // Changed since the base commit: the three new files, not Ok.tsx.
-    expectAll(bash(step, { EVENT_NAME: 'push', BEFORE_SHA: base, BASE_REF: '', MERGE_GROUP_BASE_SHA: '' }, dir), 3);
+    expectAll(bash(step, { EVENT_NAME: 'push', BEFORE_SHA: base, BASE_REF: '', MERGE_GROUP_BASE_SHA: '' }, repo), 3);
     // No merge base: every src file, through the ls-files fallback.
-    expectAll(bash(step, { EVENT_NAME: 'merge_group', MERGE_GROUP_BASE_SHA: 'b'.repeat(40), BASE_REF: '', BEFORE_SHA: '' }, dir), 4);
+    expectAll(bash(step, { EVENT_NAME: 'merge_group', MERGE_GROUP_BASE_SHA: 'b'.repeat(40), BASE_REF: '', BEFORE_SHA: '' }, repo), 4);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
