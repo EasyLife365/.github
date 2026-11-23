@@ -31,6 +31,18 @@ test('a path that cannot be read fails the run and is named', () => {
   }
 });
 
+test('a control character in a path is printed escaped, so it cannot start a workflow command', () => {
+  const dir = workspace();
+  try {
+    const r = run(dir, ['src/x\n::error title=forged::fake.tsx']);
+    assert.equal(r.status, 1, r.stdout + r.stderr);
+    assert.match(r.stderr, /FAIL src\/x\\u000a::error title=forged::fake\.tsx could not be read/);
+    assert.doesNotMatch(r.stderr + r.stdout, /^::/m);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test('a file with a space and an umlaut in its path is read and checked', () => {
   const dir = workspace();
   try {
