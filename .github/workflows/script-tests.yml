@@ -9,8 +9,9 @@ on:
       - 'scripts/**'
       - 'licence-policy/**'
       - 'tools/**'
-      - '.github/workflows/security_gate.yml'
-      - '.github/workflows/script-tests.yml'
+      # Every workflow: security_gate.yml is tested below, and wcag-workflow.test.mjs reads every
+      # workflow file (the checkout-ref gate copies and the WCAG step).
+      - '.github/workflows/**'
 
 permissions:
   contents: read
@@ -39,7 +40,7 @@ jobs:
           node -e 'const n = Object.keys(require(process.argv[1])).length; if (n < 100) { console.error("only " + n + " packages listed"); process.exit(1); } console.log(n + " packages listed")' "${RUNNER_TEMP}/lister.json"
 
       - name: Run script unit tests
-        run: node --test scripts/lib/branch-name.test.mjs scripts/lib/dependency-only.test.mjs scripts/lib/licence-policy.test.mjs scripts/lib/licence-report.test.mjs
+        run: node --test scripts/lib/branch-name.test.mjs scripts/lib/dependency-only.test.mjs scripts/lib/licence-policy.test.mjs scripts/lib/licence-report.test.mjs scripts/lib/check-wcag.test.mjs scripts/lib/wcag-workflow.test.mjs
 
       # The Security gate's npm mode, on a throwaway project built here: ms is a production dependency
       # and lodash 4.17.20 (High advisories) a development one. Proves what the gate relies on: the audit

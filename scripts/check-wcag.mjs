@@ -64,14 +64,25 @@ if (files.length === 0) {
   process.exit(0);
 }
 
+// A path comes from the pull request as it is (the workflow lists files with git -z), so a control
+// character in it is printed as an escape: a newline would otherwise start a new log line that the
+// runner reads as a workflow command (EasyLife365/.github#191).
+const printable = (path) =>
+  path.replace(/[\u0000-\u001f\u007f]/g, (c) => `\\u${c.charCodeAt(0).toString(16).padStart(4, "0")}`);
+
 let totalViolations = 0;
+let unreadable = 0;
 
 for (const file of files) {
   const filePath = resolve(file);
   let content;
   try {
     content = readFileSync(filePath, "utf-8");
-  } catch {
+  } catch (error) {
+    // A path that cannot be read was never checked, so it fails the run instead of passing
+    // silently (EasyLife365/.github#191).
+    unreadable++;
+    console.error(`FAIL ${printable(file)} could not be read, so it was not checked: ${error.code ?? error.message}`);
     continue;
   }
 
@@ -81,13 +92,14 @@ for (const file of files) {
     const violations = rule.test(filePath, content);
     for (const v of violations) {
       totalViolations++;
-      console.error(`FAIL ${file}:${v.line} [${rule.id}] ${v.message}`);
+      console.error(`FAIL ${printable(file)}:${v.line} [${rule.id}] ${v.message}`);
     }
   }
 }
 
-if (totalViolations > 0) {
-  console.error(`\nWCAG check failed: ${totalViolations} violation(s) found.`);
+if (totalViolations > 0 || unreadable > 0) {
+  const unreadableText = unreadable > 0 ? `, ${unreadable} file(s) could not be read` : "";
+  console.error(`\nWCAG check failed: ${totalViolations} violation(s) found${unreadableText}.`);
   process.exit(1);
 }
 

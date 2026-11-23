@@ -16,7 +16,7 @@ on:
         type: string
         default: '["1/1"]'
       checkout-ref:
-        description: Ref to check out, e.g. github.event.pull_request.head.sha. Needed only by a
+        description: The head commit of the pull request to check out, github.event.pull_request.head.sha (any other value is refused). Needed only by a
           caller using pull_request_target (which otherwise leaves github.sha resolving to the
           BASE branch, not the pull request being tested) -- leave empty for the normal
           push/pull_request case.
@@ -51,11 +51,46 @@ jobs:
       STORYBOOK_SHARD: ${{ matrix.storybook-shard }}
 
     steps:
+      # checkout-ref makes this job check out a pull request's own code in a pull_request_target
+      # run, which holds secrets, so it is accepted only for a bot's own pull request. github.actor
+      # alone does not prove that: it is whoever caused the event, which an outsider can arrange to be
+      # dependabot[bot] (Dependabot updating a branch of their fork), and a re-run keeps it. The author
+      # of the pull request, the repository its branch lives in and its head commit cannot be set by
+      # anyone else. Every value reaches the shell through env:, never as an expression inside run:,
+      # so no value can become shell code (EasyLife365/.github#191).
       - name: Refuse checkout-ref for anyone but an allow-listed bot
-        if: ${{ inputs.checkout-ref != '' && github.actor != 'dependabot[bot]' && github.actor != 'renovate[bot]' }}
+        if: ${{ inputs.checkout-ref != '' }}
+        shell: bash
+        env:
+          CHECKOUT_REF: ${{ inputs.checkout-ref }}
+          EVENT_NAME: ${{ github.event_name }}
+          ACTOR: ${{ github.actor }}
+          PR_AUTHOR: ${{ github.event.pull_request.user.login }}
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          PR_HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
+          REPOSITORY: ${{ github.repository }}
         run: |
-          echo "::error::checkout-ref was passed ('${{ inputs.checkout-ref }}') but actor '${{ github.actor }}' is not dependabot[bot] or renovate[bot]. Refusing to check out that ref rather than trust a caller-side actor gate that this workflow cannot see or verify."
-          exit 1
+          set -euo pipefail
+          is_bot() { [ "$1" = 'dependabot[bot]' ] || [ "$1" = 'renovate[bot]' ]; }
+          # Only GitHub-made values (event name, logins, repository names) are printed, never
+          # checkout-ref itself, so the message cannot carry a workflow command.
+          reason=''
+          if [ "$EVENT_NAME" != 'pull_request_target' ]; then
+            reason="the event is $EVENT_NAME, not pull_request_target"
+          elif ! is_bot "$PR_AUTHOR"; then
+            reason="the pull request was opened by '$PR_AUTHOR', not by dependabot[bot] or renovate[bot]"
+          elif ! is_bot "$ACTOR"; then
+            reason="the event was caused by '$ACTOR', not by dependabot[bot] or renovate[bot]"
+          elif [ "$PR_HEAD_REPO" != "$REPOSITORY" ]; then
+            reason="the pull request branch lives in '$PR_HEAD_REPO', not in '$REPOSITORY'"
+          elif [ "$CHECKOUT_REF" != "$PR_HEAD_SHA" ]; then
+            reason='checkout-ref is not the head commit of the pull request'
+          fi
+          if [ -n "$reason" ]; then
+            echo "::error::Refusing to check out checkout-ref: $reason."
+            exit 1
+          fi
+          echo "checkout-ref accepted: the head commit of a pull request opened by $PR_AUTHOR in $REPOSITORY."
 
       - uses: actions/checkout@v7
         with:
