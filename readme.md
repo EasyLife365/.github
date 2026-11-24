@@ -227,6 +227,18 @@ post a status at all.
 not that the review was favourable. The findings are in the review; the human approval is the
 gate.
 
+**Two kinds of pull request pass without a review, and the description says which.** A Dependabot
+or Renovate update of dependency files only ("Exempt author"), and an **internal library bump**
+("Internal library bump: …", also on a draft): every changed line moves an `@easylife365/*` or
+`EL.*` version up to a plain `X.Y.Z` (in `package.json`, that package's own `yarn.lock` entry
+on GitHub Packages, `.csproj` and `.props`), and every `nuget.config` of the base branch takes `EL.*`
+from the EasyLife365 feed only. Anything else is reviewed. It is a recorded exception
+(EasyLife365/.github-private#593): the code of a release version was reviewed in the library, and
+`ci_react_publish.yml` and `release_nuget_packages.yml` publish a release version only from a release
+whose tag commit is on `main` or a `hotfix/` branch. What remains: a person with package write access
+can push a version by hand. The approver reads the Files tab (version lines only) and the library's
+release of each version. A caller switches it off with `internal-bump-exempt: false`.
+
 Both compliance and the agent check are wired per repository, and every compliance check is
 individually switchable, because the estate genuinely differs — Collaboration does not use the
 feature-folder hierarchy, four repositories have no `.sln`, and EasyMeet 365 is on different

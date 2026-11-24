@@ -175,11 +175,12 @@ jobs:
       # hotfix of an older line (vX.Y.N from hotfix/vX.Y.N) used to fail to publish. This step makes it
       # publishable under `maint-<MAJOR>.<MINOR>` without it ever becoming `latest`:
       #
-      #   - greater than latest, release version  -> plain `npm publish` (becomes latest)
-      #   - greater than latest, pre-release (-)  -> `--tag next`, same release-of-the-tag condition
+      #   - greater than latest, release version  -> plain `npm publish` (becomes latest), ONLY for a
+      #     release of the tag vX.Y.N whose commit is on main or a hotfix/ branch
+      #   - greater than latest, pre-release (-)  -> `--tag next`, for a release of the tag (any branch)
       #   - equal or lower than latest            -> `--tag maint-<MAJOR>.<MINOR>`, but ONLY for a run
-      #     started by a GitHub release of the tag vX.Y.N being published (a workflow_dispatch of any
-      #     branch must not publish feature code under a maint tag)
+      #     started by a GitHub release of the tag vX.Y.N being published, whose commit is on main or a
+      #     hotfix/ branch (a workflow_dispatch of any branch must not publish feature code under a maint tag)
       #   - no latest (404, package not visible, or only non-latest tags) -> only X.Y.0 may publish;
       #     a hotfix has PATCH > 0, so it is refused instead of becoming latest by accident
       #
@@ -207,6 +208,21 @@ jobs:
             if [[ "$EL_EVENT_NAME" != release || "$EL_REF_TYPE" != tag || "$EL_REF_NAME" != "v$PKG_VERSION" ]]; then
               fail "$1 A hotfix or pre-release is published by a release of its vX.Y.N tag (event release, ref v$PKG_VERSION); this run is event '$EL_EVENT_NAME', $EL_REF_TYPE '$EL_REF_NAME'. Not publishing."
             fi
+          }
+
+          # A release version becomes `latest`, and consumers take it up without an agent review
+          # (pr-agent-review.mjs, internal library bumps, EasyLife365/.github-private#593). So it is published
+          # only from a release of its tag whose commit is on main or a hotfix/ branch: code a reviewed pull
+          # request holds. A workflow_dispatch, or a release made on another branch, publishes no release version.
+          require_reviewed_commit() {
+            require_release_of_tag "$1"
+            local head
+            head="$(git rev-parse HEAD)"
+            git merge-base --is-ancestor "$head" origin/main 2>/dev/null && return 0
+            while IFS= read -r branch; do
+              git merge-base --is-ancestor "$head" "$branch" 2>/dev/null && return 0
+            done < <(git for-each-ref --format='%(refname)' 'refs/remotes/origin/hotfix/')
+            fail "$1 The commit of v$PKG_VERSION is on neither main nor a hotfix/ branch. Not publishing."
           }
 
           # Build scripts and prepack/prepublishOnly hooks ran since the version was set: publish only
@@ -297,12 +313,13 @@ jobs:
                 reason="$reason It is a pre-release, so it is published under next and never becomes latest."
                 publish --tag next
               else
+                require_reviewed_commit "$PKG_VERSION is a release version and would become latest."
                 tag=latest
                 publish
               fi
               ;;
             not-greater)
-              require_release_of_tag "$PKG_VERSION is not greater than the current latest $latest."
+              require_reviewed_commit "$PKG_VERSION is not greater than the current latest $latest."
               tag="maint-$major.$minor"
               [[ "$tag" =~ ^maint-[0-9]+\.[0-9]+$ ]] || fail "Refusing to publish: computed dist-tag '$tag' is malformed."
               publish --tag "$tag"

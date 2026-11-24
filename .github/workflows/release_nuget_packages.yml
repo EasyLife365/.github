@@ -36,6 +36,42 @@ jobs:
       - uses: EasyLife365/get-version-action@v1.2.2
         id: version
 
+      # A release version is taken up by consumers without an agent review (pr-agent-review.mjs, internal
+      # library bumps, EasyLife365/.github-private#593), so it is published only from a release of its tag
+      # whose commit is on main or a hotfix/ branch: code a reviewed pull request holds. And without
+      # --skip-duplicate, so a version pushed earlier from elsewhere fails the release instead of being kept
+      # silently (a re-run after a partial push fails too: the pushed packages are deleted by hand first).
+      # A pre-release (X.Y.Z-...) is published for a review lane from any branch; pr_compliance.yml keeps it off main.
+      - name: Check where the version comes from
+        id: origin
+        shell: bash
+        env:
+          VERSION: ${{ steps.version.outputs.versionWithoutV }}
+          EL_EVENT_NAME: ${{ github.event_name }}
+          EL_REF_TYPE: ${{ github.ref_type }}
+          EL_REF_NAME: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          fail() { echo "::error::$(printf '%s' "$1" | tr -d '\000-\037\177')"; exit 1; }
+          [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]] || fail "Version '$VERSION' is not MAJOR.MINOR.PATCH[-prerelease]. Not publishing."
+          if [[ "$VERSION" == *-* ]]; then
+            echo "skip-duplicate=--skip-duplicate" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if [[ "$EL_EVENT_NAME" != release || "$EL_REF_TYPE" != tag || "$EL_REF_NAME" != "v$VERSION" ]]; then
+            fail "$VERSION is a release version: it is published by a release of its tag v$VERSION, and this run is event '$EL_EVENT_NAME', $EL_REF_TYPE '$EL_REF_NAME'. Not publishing."
+          fi
+          head="$(git rev-parse HEAD)"
+          reviewed=""
+          if git merge-base --is-ancestor "$head" origin/main 2>/dev/null; then reviewed=1; fi
+          if [ -z "$reviewed" ]; then
+            while IFS= read -r branch; do
+              if git merge-base --is-ancestor "$head" "$branch" 2>/dev/null; then reviewed=1; break; fi
+            done < <(git for-each-ref --format='%(refname)' 'refs/remotes/origin/hotfix/')
+          fi
+          [ -n "$reviewed" ] || fail "The commit of v$VERSION is on neither main nor a hotfix/ branch. Not publishing."
+          echo "skip-duplicate=" >> "$GITHUB_OUTPUT"
+
       # The dotnet download CDN fails transiently (HTTP 409); retry once before failing the job.
       - name: Setup .NET
         id: setup-dotnet
@@ -96,4 +132,4 @@ jobs:
           dotnet nuget push "nupkgs/*.nupkg"
           --api-key ${{ secrets.PACKAGE-TOKEN }}
           --source https://nuget.pkg.github.com/${{ github.repository_owner }}/index.json
-          --skip-duplicate
+          ${{ steps.origin.outputs.skip-duplicate }}

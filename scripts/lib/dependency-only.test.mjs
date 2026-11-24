@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { isDependencyOnlyChange, isInternalBumpOnly, commitsAreTrusted, FILES_API_CAP, COMMITS_CAP, APP_NAME, APP_EMAIL } from './dependency-only.mjs';
+import { isDependencyOnlyChange, isInternalBumpOnly, nugetConfigPinsInternal, commitsAreTrusted, FILES_API_CAP, COMMITS_CAP, APP_NAME, APP_EMAIL } from './dependency-only.mjs';
 
 const f = (filename, extra = {}) => ({ filename, status: 'modified', ...extra });
 const wf = (patch, extra = {}) => f('.github/workflows/ci.yml', { patch, ...extra });
@@ -267,7 +267,13 @@ test('pairs must be adjacent within a hunk', () => {
 });
 
 // ---- isInternalBumpOnly (patches mirror EasyLife365-Collaboration#5153 and #4885) ----
-const internal = (files) => isInternalBumpOnly(files).internalBump;
+// The files API gives every file its additions and deletions; the fixtures get them from their own patch.
+const counted = (file) => {
+  if (!file || typeof file.patch !== 'string') return file;
+  const lines = file.patch.split('\n');
+  return { additions: lines.filter((l) => l.startsWith('+')).length, deletions: lines.filter((l) => l.startsWith('-')).length, ...file };
+};
+const internal = (files) => isInternalBumpOnly(Array.isArray(files) ? files.map(counted) : files).internalBump;
 const sha = (c) => c.repeat(40);
 const pkg = (o, n, { indent = '    ', comma = ',', name = '@easylife365/react' } = {}) =>
   f('package.json', { patch: `@@ -51,7 +51,7 @@\n   "dependencies": {\n-${indent}"${name}": "${o}"${comma}\n+${indent}"${name}": "${n}"${comma}\n     "@fortawesome/fontawesome-svg-core": "7.3.1",` });
@@ -373,5 +379,82 @@ test('internal bump: empty, non-array, nameless and truncated listings are revie
   assert.equal(internal([]), false);
   assert.equal(internal([null]), false);
   assert.equal(internal(Array.from({ length: FILES_API_CAP }, () => pkg('0.15.3', '0.15.4'))), false);
-  assert.deepEqual(isInternalBumpOnly([pkg('0.15.3', '0.15.4'), f('src/a.ts', { patch: '' })]), { internalBump: false, offending: 'src/a.ts' });
+  assert.deepEqual(isInternalBumpOnly([pkg('0.15.3', '0.15.4'), f('src/a.ts', { patch: '' })].map(counted)), { internalBump: false, offending: 'src/a.ts' });
+});
+
+test('internal bump: a patch that does not add up to the file counts (cut off, or no counts) is reviewed', () => {
+  const file = counted(pkg('0.15.3', '0.15.4'));
+  assert.equal(isInternalBumpOnly([file]).internalBump, true);
+  assert.equal(isInternalBumpOnly([{ ...file, additions: 2 }]).internalBump, false);
+  assert.equal(isInternalBumpOnly([{ ...file, deletions: 0 }]).internalBump, false);
+  const { additions, deletions, ...noCounts } = file;
+  assert.equal(isInternalBumpOnly([noCounts]).internalBump, false);
+});
+
+test('internal bump: says when a NuGet file moved, so the caller checks nuget.config', () => {
+  assert.deepEqual(isInternalBumpOnly([pkg('0.15.3', '0.15.4'), lock('0.15.3', '0.15.4')].map(counted)), { internalBump: true, nuget: false });
+  assert.deepEqual(isInternalBumpOnly([csproj('5.15.1', '5.17.1')].map(counted)), { internalBump: true, nuget: true });
+  assert.equal(isInternalBumpOnly([csproj('5.15.1', '5.17.1', { path: 'Directory.Packages.props', element: 'PackageVersion' })].map(counted)).nuget, true);
+});
+
+test('internal bump: several adjacent lines in one run pass when each pair is a bump', () => {
+  const two = f('package.json', { patch: '@@ -1,2 +1,2 @@\n-    "@easylife365/react": "0.15.3",\n-    "@easylife365/react-core": "0.15.3",\n+    "@easylife365/react": "0.15.4",\n+    "@easylife365/react-core": "0.15.4",' });
+  assert.equal(internal([two]), true);
+  const swapped = f('package.json', { patch: '@@ -1,2 +1,2 @@\n-    "@easylife365/react": "0.15.3",\n-    "@easylife365/react-core": "0.15.3",\n+    "@easylife365/react-core": "0.15.4",\n+    "@easylife365/react": "0.15.4",' });
+  assert.equal(internal([swapped]), false);
+  const nuget = f('a.csproj', { patch: '@@ -1,2 +1,2 @@\n-    <PackageReference Include="EL.Core" Version="5.15.1" />\n-    <PackageReference Include="EL.Core.API" Version="5.15.1" />\n+    <PackageReference Include="EL.Core" Version="5.17.1" />\n+    <PackageReference Include="EL.Core.API" Version="5.17.1" />' });
+  assert.equal(internal([nuget]), true);
+});
+
+test('internal bump: the lock hash in the path and the fragment must be the same', () => {
+  const other = f('yarn.lock', { patch: `@@ -1,4 +1,4 @@\n${entry('-', '0.15.3')}\n+"@easylife365/react@0.15.4":\n+  version "0.15.4"\n+  resolved "https://npm.pkg.github.com/download/@easylife365/react/0.15.4/${sha('b')}#${sha('c')}"\n+  integrity sha512-a==` });
+  assert.equal(internal([other]), false);
+});
+
+test('internal bump: only spaces and tabs count as whitespace', () => {
+  const nbsp = f('package.json', { patch: '@@ -1 +1 @@\n-    "@easylife365/react": "0.15.3",\n+    "@easylife365/react": "0.15.4",' });
+  assert.equal(internal([nbsp]), false);
+  const extraAttribute = f('a.csproj', { patch: '@@ -1 +1 @@\n-    <PackageReference Include="EL.Core" Version="5.15.1" PrivateAssets="all" />\n+    <PackageReference Include="EL.Core" Version="5.17.1" PrivateAssets="all" />' });
+  assert.equal(internal([extraAttribute]), false);
+});
+
+// ---- nugetConfigPinsInternal (the shape of EasyLife365-Collaboration/nuget.config) ----
+const nugetConfig = ({ mapping = true, elSource = 'Github', extra = '', githubUrl = 'https://nuget.pkg.github.com/EasyLife365/index.json' } = {}) => `<?xml version="1.0" encoding="utf-8"?>
+<configuration>
+  <packageSources>
+    <!-- a comment with <packageSourceMapping> in it is ignored -->
+    <clear />
+    <add key="NuGet official package source" value="https://api.nuget.org/v3/index.json" />
+    <add key="Github" value="${githubUrl}" />
+  </packageSources>
+  ${mapping ? `<packageSourceMapping>
+    <packageSource key="${elSource}">
+      <package pattern="EL.*" />
+    </packageSource>
+    <packageSource key="NuGet official package source">
+      <package pattern="*" />${extra}
+    </packageSource>
+  </packageSourceMapping>` : ''}
+</configuration>`;
+
+test('nuget.config: EL.* mapped to the EasyLife365 feed passes, in every file', () => {
+  assert.equal(nugetConfigPinsInternal([nugetConfig()]), true);
+  assert.equal(nugetConfigPinsInternal([nugetConfig(), nugetConfig()]), true);
+});
+
+test('nuget.config: no mapping, EL.* on nuget.org, another feed URL or an EL. pattern on nuget.org fails', () => {
+  assert.equal(nugetConfigPinsInternal([nugetConfig({ mapping: false })]), false);
+  assert.equal(nugetConfigPinsInternal([nugetConfig(), nugetConfig({ mapping: false })]), false);
+  assert.equal(nugetConfigPinsInternal([nugetConfig({ elSource: 'NuGet official package source' })]), false);
+  assert.equal(nugetConfigPinsInternal([nugetConfig({ githubUrl: 'https://nuget.pkg.github.com/Other/index.json' })]), false);
+  assert.equal(nugetConfigPinsInternal([nugetConfig({ extra: '\n      <package pattern="EL.Core.*" />' })]), false);
+  assert.equal(nugetConfigPinsInternal([nugetConfig({ extra: '\n      <package pattern="el.core.api" />' })]), false);
+});
+
+test('nuget.config: a clear in the mapping, a source defined twice, no file or not text fails', () => {
+  assert.equal(nugetConfigPinsInternal([nugetConfig().replace('<packageSourceMapping>\n', '<packageSourceMapping>\n    <clear />\n')]), false);
+  assert.equal(nugetConfigPinsInternal([nugetConfig().replace('<clear />', '<add key="Github" value="https://api.nuget.org/v3/index.json" />')]), false);
+  assert.equal(nugetConfigPinsInternal([]), false);
+  assert.equal(nugetConfigPinsInternal(null), false);
+  assert.equal(nugetConfigPinsInternal([null]), false);
 });

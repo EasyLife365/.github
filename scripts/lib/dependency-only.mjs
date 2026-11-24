@@ -1,9 +1,15 @@
-// Decides whether a pull request is a trusted dependency-only change.
+// Decides whether a pull request is a trusted dependency-only change, for pr-agent-review.mjs's two
+// routes past the agent review.
 //
-// Used by pr-agent-review.mjs to limit the bot-author exemption (EasyLife365/.github#146). The PR
-// author does not change when someone with write access pushes more commits to a dependabot/*
-// branch, so the author alone cannot say that Dependabot wrote what is being merged. Two things
-// can: the files (isDependencyOnlyChange) and the commits (commitsAreTrusted). BOTH must hold.
+// The bot-author exemption (EasyLife365/.github#146). The PR author does not change when someone with
+// write access pushes more commits to a dependabot/* branch, so the author alone cannot say that
+// Dependabot wrote what is being merged. Two things can: the files (isDependencyOnlyChange) and the
+// commits (commitsAreTrusted). BOTH must hold.
+//
+// The internal library bump, for any author (EasyLife365/.github-private#593): every changed line is
+// the version of one of our own packages (isInternalBumpOnly), and for NuGet every nuget.config of the
+// base branch takes EL.* from our feed only (nugetConfigPinsInternal).
+//
 // This module is pure (no I/O, nothing runs on import) so it can be tested with node --test.
 
 /** Manifests and lockfiles, in any directory. */
@@ -78,114 +84,29 @@ function isWorkflowFile(path) {
  * rejected, as are added-only and removed-only runs.
  */
 function isRefBumpPatch(patch) {
-  let removed = [];
-  let added = [];
-  let pairs = 0;
-  const flush = () => {
-    if (removed.length === 0 && added.length === 0) return true;
-    if (removed.length === 0 || removed.length !== added.length) return false;
-    const ok = removed.every((oldLine, i) => {
-      const before = USES_LINE.exec(oldLine);
-      const after = USES_LINE.exec(added[i]);
-      return (
-        before !== null &&
-        after !== null &&
-        before[1] === after[1] &&
-        (before[2] || '') === (after[2] || '') &&
-        before[4] === after[4]
-      );
-    });
-    pairs += removed.length;
-    removed = [];
-    added = [];
-    return ok;
-  };
-  for (const line of patch.split('\n')) {
-    if (line.startsWith('-')) {
-      if (added.length > 0 && !flush()) return false;
-      removed.push(line);
-    } else if (line.startsWith('+')) {
-      added.push(line);
-    } else if (!flush()) {
-      return false; // context, hunk header or "\ No newline" line ends a run
-    }
-  }
-  return flush() && pairs > 0;
-}
-
-/**
- * @param {Array<{filename: string, status?: string, patch?: string, previous_filename?: string}>} files
- *   the pull request's files as returned by GET /pulls/{n}/files
- * @returns {{dependencyOnly: boolean, offending?: string}} `offending` is the first file that
- *   rules the exemption out. An empty or possibly truncated listing is never dependency-only.
- */
-export function isDependencyOnlyChange(files) {
-  if (!Array.isArray(files) || files.length === 0) {
-    return { dependencyOnly: false, offending: '(no file listing)' };
-  }
-  if (files.length >= FILES_API_CAP) {
-    return { dependencyOnly: false, offending: `(listing may be truncated at ${FILES_API_CAP} files)` };
-  }
-  for (const file of files) {
-    const path = file.filename;
-    // A rename moves content from somewhere else; do not reason about it.
-    if (file.status === 'renamed' || (file.previous_filename && file.previous_filename !== path)) {
-      return { dependencyOnly: false, offending: path };
-    }
-    if (file.status === 'removed') return { dependencyOnly: false, offending: path };
-    if (isDependencyFile(path)) continue;
-    if (
-      isWorkflowFile(path) &&
-      file.status === 'modified' &&
-      typeof file.patch === 'string' &&
-      isRefBumpPatch(file.patch)
-    ) {
-      continue;
-    }
-    return { dependencyOnly: false, offending: path };
-  }
-  return { dependencyOnly: true };
-}
-
-// ---- Internal library bumps (EasyLife365/.github-private#593) ----
-//
-// A pull request that only moves the version of our own packages (@easylife365/* on GitHub Packages,
-// the EL.* NuGet suite) to a higher plain X.Y.Z, whoever wrote it. The code of that version was
-// reviewed in the library's own pull request and published by its release workflow; the consumer
-// pull request only moves the pointer. Unlike the Dependabot route this judges every CHANGED LINE,
-// not only the file names, so no provenance is needed: nothing but those version strings can change.
-
-const SEMVER = String.raw`(\d+)\.(\d+)\.(\d+)`;
-const NPM_NAME = String.raw`@easylife365\/[a-z0-9][a-z0-9._-]*`;
-const EOL = String.raw`\s*\r?$`;
-
-/** package.json: `"@easylife365/x": "[^~]X.Y.Z"[,]`. Groups: 1 indent, 2 name, 3 range prefix, 4 version, 8 comma. */
-const NPM_DEP_LINE = new RegExp(String.raw`^[+-](\s*)"(${NPM_NAME})":\s*"([\^~]?)(${SEMVER})"(,?)${EOL}`);
-/** .csproj/.props: `<PackageReference|PackageVersion Include|Update="EL.X" Version="X.Y.Z" />`. Groups: 1 indent, 2 element, 3 attribute, 4 name, 5 version. */
-const NUGET_LINE = new RegExp(
-  String.raw`^[+-](\s*)<(PackageReference|PackageVersion)\s+(Include|Update)="(EL\.[A-Za-z0-9][A-Za-z0-9._]*)"\s+Version="(${SEMVER})"\s*\/>${EOL}`,
-);
-/** yarn.lock v1 entry of an internal package: header, version, resolved on GitHub Packages, integrity. */
-const LOCK_HEADER = new RegExp(String.raw`^[+-]"(${NPM_NAME})@([\^~]?)(${SEMVER})":${EOL}`);
-const LOCK_VERSION = new RegExp(String.raw`^[+-]  version "(${SEMVER})"${EOL}`);
-const LOCK_RESOLVED = new RegExp(
-  String.raw`^[+-]  resolved "https:\/\/npm\.pkg\.github\.com\/download\/(${NPM_NAME})\/(${SEMVER})\/[0-9a-f]{40}#[0-9a-f]{40}"${EOL}`,
-);
-const LOCK_INTEGRITY = new RegExp(String.raw`^[+-]  integrity sha512-[A-Za-z0-9+/]+={0,2}${EOL}`);
-
-function isHigher(oldVersion, newVersion) {
-  const a = oldVersion.split('.').map(Number);
-  const b = newVersion.split('.').map(Number);
-  for (let i = 0; i < 3; i++) {
-    if (b[i] !== a[i]) return b[i] > a[i];
-  }
-  return false;
+  const runs = changeRuns(patch);
+  return (
+    runs !== null &&
+    runs.every((run) =>
+      pairwise(run, (oldLine, newLine) => {
+        const before = USES_LINE.exec(oldLine);
+        const after = USES_LINE.exec(newLine);
+        return (
+          before !== null &&
+          after !== null &&
+          before[1] === after[1] &&
+          (before[2] || '') === (after[2] || '') &&
+          before[4] === after[4]
+        );
+      }),
+    )
+  );
 }
 
 /**
  * Splits a patch into change runs: removed lines immediately followed by added lines, as git prints a
- * changed block. Returns null for an added-only or removed-only run, a '-' after a '+' in one run, or a
- * patch with no change at all.
+ * changed block. A context line, a hunk header or a "\ No newline" line ends a run. Returns null for an
+ * added-only or removed-only run, a '-' after a '+' in one run, or a patch with no change at all.
  */
 function changeRuns(patch) {
   const runs = [];
@@ -213,8 +134,89 @@ function changeRuns(patch) {
   return ok && runs.length > 0 ? runs : null;
 }
 
+/** The i-th removed line pairs with the i-th added line. */
 function pairwise(run, check) {
   return run.removed.length === run.added.length && run.removed.every((oldLine, i) => check(oldLine, run.added[i]));
+}
+
+/** Why a listing cannot be judged (empty, not a list, possibly truncated), or null. */
+function unreadableListing(files) {
+  if (!Array.isArray(files) || files.length === 0) return '(no file listing)';
+  if (files.length >= FILES_API_CAP) return `(listing may be truncated at ${FILES_API_CAP} files)`;
+  return null;
+}
+
+/**
+ * @param {Array<{filename: string, status?: string, patch?: string, previous_filename?: string}>} files
+ *   the pull request's files as returned by GET /pulls/{n}/files
+ * @returns {{dependencyOnly: boolean, offending?: string}} `offending` is the first file that
+ *   rules the exemption out. An empty or possibly truncated listing is never dependency-only.
+ */
+export function isDependencyOnlyChange(files) {
+  const unreadable = unreadableListing(files);
+  if (unreadable !== null) return { dependencyOnly: false, offending: unreadable };
+  for (const file of files) {
+    const path = file.filename;
+    // A rename moves content from somewhere else; do not reason about it.
+    if (file.status === 'renamed' || (file.previous_filename && file.previous_filename !== path)) {
+      return { dependencyOnly: false, offending: path };
+    }
+    if (file.status === 'removed') return { dependencyOnly: false, offending: path };
+    if (isDependencyFile(path)) continue;
+    if (
+      isWorkflowFile(path) &&
+      file.status === 'modified' &&
+      typeof file.patch === 'string' &&
+      isRefBumpPatch(file.patch)
+    ) {
+      continue;
+    }
+    return { dependencyOnly: false, offending: path };
+  }
+  return { dependencyOnly: true };
+}
+
+// ---- Internal library bumps (EasyLife365/.github-private#593) ----
+//
+// A pull request that only moves the version of our own packages (@easylife365/* on GitHub Packages,
+// the EL.* NuGet suite) to a higher plain X.Y.Z, whoever wrote it. The code of that version was
+// reviewed in the library's own pull request, and the shared publish workflows publish a release
+// version only from a release whose tag commit is on main or a hotfix/ branch (ci_react_publish.yml,
+// release_nuget_packages.yml); the consumer pull request only moves the pointer. Unlike the Dependabot
+// route this judges every CHANGED LINE, not only the file names, so no provenance is needed.
+//
+// What pins the bytes to the version: in yarn.lock, the resolved URL carries the tarball's SHA-1 twice
+// (path and fragment, required equal here) and GitHub Packages answers 409 for a hash that is not the
+// one of that name and version (checked 2026-11-24 with @easylife365/react 0.15.3 and 0.15.4), and yarn
+// checks the integrity of what it downloads. For NuGet the line carries no source, so every nuget.config
+// of the base branch must take EL.* from the EasyLife365 feed only (nugetConfigPinsInternal).
+
+const SEMVER = String.raw`(\d+)\.(\d+)\.(\d+)`;
+const NPM_NAME = String.raw`@easylife365\/[a-z0-9][a-z0-9._-]*`;
+const EOL = String.raw`[ \t]*\r?$`;
+
+/** package.json: `"@easylife365/x": "[^~]X.Y.Z"[,]`. Groups: 1 indent, 2 name, 3 range prefix, 4 version, 8 comma. */
+const NPM_DEP_LINE = new RegExp(String.raw`^[+-]([ \t]*)"(${NPM_NAME})":[ \t]*"([\^~]?)(${SEMVER})"(,?)${EOL}`);
+/** .csproj/.props: `<PackageReference|PackageVersion Include|Update="EL.X" Version="X.Y.Z" />`. Groups: 1 indent, 2 element, 3 attribute, 4 name, 5 version. */
+const NUGET_LINE = new RegExp(
+  String.raw`^[+-]([ \t]*)<(PackageReference|PackageVersion)[ \t]+(Include|Update)="(EL\.[A-Za-z0-9][A-Za-z0-9._]*)"[ \t]+Version="(${SEMVER})"[ \t]*\/>${EOL}`,
+);
+/** yarn.lock v1 entry of an internal package: header, version, resolved on GitHub Packages, integrity. */
+const LOCK_HEADER = new RegExp(String.raw`^[+-]"(${NPM_NAME})@([\^~]?)(${SEMVER})":${EOL}`);
+const LOCK_VERSION = new RegExp(String.raw`^[+-]  version "(${SEMVER})"${EOL}`);
+/** Groups: 1 name, 2 version, 6 path hash; the fragment must repeat the path hash. */
+const LOCK_RESOLVED = new RegExp(
+  String.raw`^[+-]  resolved "https:\/\/npm\.pkg\.github\.com\/download\/(${NPM_NAME})\/(${SEMVER})\/([0-9a-f]{40})#\6"${EOL}`,
+);
+const LOCK_INTEGRITY = new RegExp(String.raw`^[+-]  integrity sha512-[A-Za-z0-9+/]+={0,2}${EOL}`);
+
+function isHigher(oldVersion, newVersion) {
+  const a = oldVersion.split('.').map(Number);
+  const b = newVersion.split('.').map(Number);
+  for (let i = 0; i < 3; i++) {
+    if (b[i] !== a[i]) return b[i] > a[i];
+  }
+  return false;
 }
 
 function npmDependencyPair(oldLine, newLine) {
@@ -256,29 +258,33 @@ function lockRun(run) {
   return a.spec === undefined || (a.prefix === b.prefix && isHigher(a.spec, b.spec));
 }
 
+const isNugetFile = (name) => name.endsWith('.csproj') || name.endsWith('.props');
+
 function internalBumpFileOk(file) {
   const name = baseName(file.filename);
   const runs = changeRuns(file.patch);
   if (runs === null) return false;
+  // The patch must be whole: its lines add up to the file's own counts (a cut-off patch does not).
+  const additions = runs.reduce((n, run) => n + run.added.length, 0);
+  const deletions = runs.reduce((n, run) => n + run.removed.length, 0);
+  if (additions !== file.additions || deletions !== file.deletions) return false;
   if (name === 'package.json') return runs.every((run) => pairwise(run, npmDependencyPair));
   if (name === 'yarn.lock') return runs.every(lockRun);
-  if (name.endsWith('.csproj') || name.endsWith('.props')) return runs.every((run) => pairwise(run, nugetPair));
+  if (isNugetFile(name)) return runs.every((run) => pairwise(run, nugetPair));
   return false;
 }
 
 /**
- * @param {Array<{filename: string, status?: string, patch?: string, previous_filename?: string}>} files
- *   the pull request's files as returned by GET /pulls/{n}/files
- * @returns {{internalBump: boolean, offending?: string}} `offending` is the first file that rules it
- *   out. Anything unreadable (no patch, a truncated listing) is never an internal bump.
+ * @param {Array<{filename: string, status?: string, patch?: string, previous_filename?: string,
+ *   additions?: number, deletions?: number}>} files the pull request's files as returned by GET /pulls/{n}/files
+ * @returns {{internalBump: boolean, nuget?: boolean, offending?: string}} `nuget` says a .csproj or .props
+ *   file moved, so the caller must also check the nuget.config files (nugetConfigPinsInternal).
+ *   `offending` is the first file that rules it out. Anything unreadable (no patch, a patch that does not
+ *   add up to the file's counts, a truncated listing) is never an internal bump.
  */
 export function isInternalBumpOnly(files) {
-  if (!Array.isArray(files) || files.length === 0) {
-    return { internalBump: false, offending: '(no file listing)' };
-  }
-  if (files.length >= FILES_API_CAP) {
-    return { internalBump: false, offending: `(listing may be truncated at ${FILES_API_CAP} files)` };
-  }
+  const unreadable = unreadableListing(files);
+  if (unreadable !== null) return { internalBump: false, offending: unreadable };
   for (const file of files) {
     const path = file?.filename;
     if (
@@ -291,7 +297,43 @@ export function isInternalBumpOnly(files) {
       return { internalBump: false, offending: typeof path === 'string' ? path : '(a file without a name)' };
     }
   }
-  return { internalBump: true };
+  return { internalBump: true, nuget: files.some((file) => isNugetFile(baseName(file.filename))) };
+}
+
+export const EASYLIFE_NUGET_FEED = 'https://nuget.pkg.github.com/EasyLife365/index.json';
+
+/**
+ * True when every nuget.config text takes EL.* package ids from the EasyLife365 feed only: it has a
+ * packageSourceMapping with `EL.*` under a source whose value is that feed, and every pattern that
+ * starts with `EL.` sits under such a source. Without it, an EL.* id can come from nuget.org, where
+ * anybody can publish a higher version. Anything unusual (no text, a clear inside the mapping, a
+ * source defined twice) is false.
+ * @param {string[]} texts the nuget.config files of the base branch, every one of them
+ */
+export function nugetConfigPinsInternal(texts) {
+  if (!Array.isArray(texts) || texts.length === 0) return false;
+  return texts.every((raw) => {
+    if (typeof raw !== 'string') return false;
+    const text = raw.replace(/<!--[\s\S]*?-->/g, '');
+    const sources = new Map();
+    const sourcesBlock = /<packageSources>([\s\S]*?)<\/packageSources>/.exec(text);
+    if (sourcesBlock === null) return false;
+    for (const add of sourcesBlock[1].matchAll(/<add\s+key="([^"]*)"\s+value="([^"]*)"[^>]*\/>/g)) {
+      if (sources.has(add[1])) return false;
+      sources.set(add[1], add[2]);
+    }
+    const mappings = [...text.matchAll(/<packageSourceMapping>([\s\S]*?)<\/packageSourceMapping>/g)];
+    if (mappings.length !== 1 || /<clear\b/.test(mappings[0][1])) return false;
+    let pinned = false;
+    for (const source of mappings[0][1].matchAll(/<packageSource\s+key="([^"]*)"\s*>([\s\S]*?)<\/packageSource>/g)) {
+      const isFeed = sources.get(source[1]) === EASYLIFE_NUGET_FEED;
+      for (const pattern of source[2].matchAll(/<package\s+pattern="([^"]*)"\s*\/>/g)) {
+        if (/^el\./i.test(pattern[1]) && !isFeed) return false;
+        if (pattern[1] === 'EL.*' && isFeed) pinned = true;
+      }
+    }
+    return pinned;
+  });
 }
 
 /**

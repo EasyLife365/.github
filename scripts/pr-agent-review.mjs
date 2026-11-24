@@ -10,6 +10,11 @@
 //
 //     One human approval plus a passing agent review on every pull request.
 //
+// Two kinds of pull request pass without a review, and only by what their diff contains: a Dependabot
+// or Renovate dependency update, and an internal library bump (only @easylife365/* or EL.* versions
+// move up, EasyLife365/.github-private#593). For those two this script DOES read the diff, line by line
+// for the bump, and the status description says which one it was.
+//
 // One review per pull request is enough. The marker names the commit that was reviewed, but the
 // check does not require it to be the head: a push after the review does not turn the status red
 // and does not force another review. What it does instead is say so -- the status names the
@@ -64,7 +69,7 @@
 const PR_NUMBER_IN_REF = /\/pr-(\d+)-[0-9a-f]+$/;
 
 import { appendFileSync } from 'node:fs';
-import { isDependencyOnlyChange, isInternalBumpOnly, commitsAreTrusted, COMMITS_CAP } from './lib/dependency-only.mjs';
+import { isDependencyOnlyChange, isInternalBumpOnly, nugetConfigPinsInternal, commitsAreTrusted, COMMITS_CAP } from './lib/dependency-only.mjs';
 
 // The start of the status description for an internal library bump. The agent flow of
 // EasyLife365/.github-private reads it to close its review loop without a round: change both together.
@@ -81,7 +86,7 @@ const cfg = {
   statusContext: (env.INPUT_STATUS_CONTEXT || 'agent-review').trim(),
   exemptAuthors: (env.INPUT_EXEMPT_AUTHORS || 'dependabot[bot],renovate[bot]')
     .split(',').map((s) => s.trim().toLowerCase()).filter(Boolean),
-  internalBumpExempt: (env.INPUT_INTERNAL_BUMP_EXEMPT || 'true').trim().toLowerCase() !== 'false',
+  internalBumpExempt: (env.INPUT_INTERNAL_BUMP_EXEMPT || '').trim() === 'true',
 };
 
 if (!cfg.prNumber && cfg.mergeGroupHeadRef) {
@@ -225,19 +230,38 @@ const author = (pull.user?.login || '').toLowerCase();
 const statusSha = mergeGroupSha || headSha;
 
 // A pull request that only moves @easylife365/* or EL.* versions up to a plain X.Y.Z needs no agent
-// review, whoever wrote it (EasyLife365/.github-private#593): the code of that version was reviewed in
-// the library's own pull request, and isInternalBumpOnly judges every changed line, so nothing else can
-// ride along. It runs before the draft check so a draft says so too: the agent flow reads this status
-// on its draft to skip the review loop. Anything unreadable falls through to review -- fail closed.
+// review, whoever wrote it (EasyLife365/.github-private#593, a recorded exception to "an agent review on
+// every pull request"): the code of that version was reviewed in the library's own pull request, and
+// isInternalBumpOnly judges every changed line, so nothing else can ride along. It runs before the draft
+// check so a draft says so too: the agent flow reads this status on its draft to skip the review loop.
+// Anything unreadable falls through to review -- fail closed.
 //
-// RESIDUAL: a version is trusted because the library's release workflow published it. A library whose
-// publish workflow also runs on workflow_dispatch can publish a higher version from an unreviewed
-// branch; the human approver checks that the version has a release in the library repository.
+// RESIDUAL: a version is trusted because the shared publish workflows published it, and they publish a
+// release version only from a release whose tag commit is on main or a hotfix/ branch
+// (ci_react_publish.yml, release_nuget_packages.yml). A person with package write access could still
+// push a version by hand, or a library could publish without those workflows; the approver sees the
+// version in the Files tab and the library's release of it.
 if (cfg.internalBumpExempt) {
   let verdict;
   try {
     const files = await apiAll(`/repos/${owner}/${repo}/pulls/${cfg.prNumber}/files`, 30);
     verdict = isInternalBumpOnly(files);
+    if (verdict.internalBump && files.length !== pull.changed_files) {
+      verdict = { internalBump: false, offending: `(the listing has ${files.length} files, the pull request ${pull.changed_files})` };
+    }
+    if (verdict.internalBump && verdict.nuget) {
+      // An EL.* line carries no source: every nuget.config of the base branch must take EL.* from our feed only.
+      const tree = await api(`/repos/${owner}/${repo}/git/trees/${pull.base.sha}?recursive=1`);
+      const configs = (tree.tree || []).filter((entry) => entry.type === 'blob' && /(^|\/)nuget\.config$/i.test(entry.path));
+      const texts = [];
+      for (const entry of tree.truncated ? [] : configs) {
+        const blob = await api(`/repos/${owner}/${repo}/git/blobs/${entry.sha}`);
+        texts.push(Buffer.from(blob.content || '', blob.encoding === 'base64' ? 'base64' : 'utf8').toString('utf8'));
+      }
+      if (!nugetConfigPinsInternal(texts)) {
+        verdict = { internalBump: false, offending: '(a nuget.config of the base branch does not take EL.* from the EasyLife365 feed only)' };
+      }
+    }
     if (verdict.internalBump) {
       const again = await api(`/repos/${owner}/${repo}/pulls/${cfg.prNumber}`);
       if (again.head.sha !== headSha) {

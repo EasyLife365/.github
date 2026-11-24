@@ -3,6 +3,10 @@
 # The approval rule is "one human approval plus a passing agent review on every pull request".
 # The human half is enforced by the branch ruleset. This is the other half.
 #
+# Two kinds of pull request pass without a review, by what their diff contains: a Dependabot or Renovate
+# dependency update (exempt-authors) and an internal library bump (internal-bump-exempt): see
+# scripts/pr-agent-review.mjs. For every other pull request:
+#
 # It does not read the review or judge what it found -- the judgement is in the review itself,
 # posted by the /el-review skill in the approver's own session. This answers only "did one
 # happen on this pull request".
