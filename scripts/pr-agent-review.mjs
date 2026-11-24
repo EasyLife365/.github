@@ -10,6 +10,11 @@
 //
 //     One human approval plus a passing agent review on every pull request.
 //
+// Two kinds of pull request pass without a review, and only by what their diff contains: a Dependabot
+// or Renovate dependency update, and an internal library bump (only @easylife365/* or EL.* versions
+// move up, EasyLife365/.github-private#593). For those two this script DOES read the diff, line by line
+// for the bump, and the status description says which one it was.
+//
 // One review per pull request is enough. The marker names the commit that was reviewed, but the
 // check does not require it to be the head: a push after the review does not turn the status red
 // and does not force another review. What it does instead is say so -- the status names the
@@ -64,7 +69,11 @@
 const PR_NUMBER_IN_REF = /\/pr-(\d+)-[0-9a-f]+$/;
 
 import { appendFileSync } from 'node:fs';
-import { isDependencyOnlyChange, commitsAreTrusted, COMMITS_CAP } from './lib/dependency-only.mjs';
+import { isDependencyOnlyChange, isInternalBumpOnly, nugetConfigPinsInternal, commitsAreTrusted, COMMITS_CAP } from './lib/dependency-only.mjs';
+
+// The start of the status description for an internal library bump. The agent flow of
+// EasyLife365/.github-private reads it to close its review loop without a round: change both together.
+const INTERNAL_BUMP_STATUS = 'Internal library bump:';
 
 const env = process.env;
 
@@ -77,6 +86,7 @@ const cfg = {
   statusContext: (env.INPUT_STATUS_CONTEXT || 'agent-review').trim(),
   exemptAuthors: (env.INPUT_EXEMPT_AUTHORS || 'dependabot[bot],renovate[bot]')
     .split(',').map((s) => s.trim().toLowerCase()).filter(Boolean),
+  internalBumpExempt: (env.INPUT_INTERNAL_BUMP_EXEMPT || '').trim() === 'true',
 };
 
 if (!cfg.prNumber && cfg.mergeGroupHeadRef) {
@@ -218,6 +228,63 @@ const author = (pull.user?.login || '').toLowerCase();
 // reviewed commit is compared with below). Identical to headSha outside a merge queue -- see the
 // merge-queue comment near the top of this file.
 const statusSha = mergeGroupSha || headSha;
+
+// A pull request that only moves @easylife365/* or EL.* versions up to a plain X.Y.Z needs no agent
+// review, whoever wrote it (EasyLife365/.github-private#593, a recorded exception to "an agent review on
+// every pull request"): the shared publish workflows (ci_react_publish.yml, release_nuget_packages.yml)
+// publish a release version only from a release whose tag commit is on main or a hotfix/ branch, and
+// isInternalBumpOnly judges every changed line, so nothing else can ride along. On a hotfix/ base only a
+// higher patch of the same MAJOR.MINOR passes. It runs before the draft check so a draft says so too: the
+// agent flow reads this status on its draft to skip the review loop. Anything unreadable falls through to
+// review -- fail closed.
+//
+// RESIDUAL: until the hotfix and tag rulesets are active (EasyLife365/.github-private#325), anyone with
+// Write on a library repository can create a hotfix/ branch with unreviewed code and release it; a person
+// with package write access can push a version by hand; versions published before the gate are trusted
+// as they are. The approver reads the Files tab and checks that each release's tag commit came through a
+// merged pull request.
+if (cfg.internalBumpExempt) {
+  let verdict;
+  try {
+    const files = await apiAll(`/repos/${owner}/${repo}/pulls/${cfg.prNumber}/files`, 30);
+    verdict = isInternalBumpOnly(files, { patchOnly: String(pull.base.ref || '').startsWith('hotfix/') });
+    if (verdict.internalBump && files.length !== pull.changed_files) {
+      verdict = { internalBump: false, offending: `(the listing has ${files.length} files, the pull request ${pull.changed_files})` };
+    }
+    if (verdict.internalBump && verdict.nuget) {
+      // An EL.* line carries no source: the base branch as it is now (what the merge will hold; the pull
+      // request cannot change a nuget.config) needs one at the root, and every one must take EL.* from our
+      // feed only. A project outside every config folder would fall back to the user-level config.
+      const baseRef = String(pull.base.ref).split('/').map(encodeURIComponent).join('/');
+      const baseTip = (await api(`/repos/${owner}/${repo}/git/ref/heads/${baseRef}`)).object.sha;
+      const tree = await api(`/repos/${owner}/${repo}/git/trees/${baseTip}?recursive=1`);
+      const configs = (tree.tree || []).filter((entry) => entry.type === 'blob' && /(^|\/)nuget\.config$/i.test(entry.path));
+      const texts = [];
+      const hasRoot = configs.some((entry) => /^nuget\.config$/i.test(entry.path));
+      for (const entry of tree.truncated || !hasRoot ? [] : configs) {
+        const blob = await api(`/repos/${owner}/${repo}/git/blobs/${entry.sha}`);
+        texts.push(Buffer.from(blob.content || '', blob.encoding === 'base64' ? 'base64' : 'utf8').toString('utf8'));
+      }
+      if (!nugetConfigPinsInternal(texts)) {
+        verdict = { internalBump: false, offending: '(a nuget.config of the base branch does not take EL.* from the EasyLife365 feed only)' };
+      }
+    }
+    if (verdict.internalBump) {
+      const again = await api(`/repos/${owner}/${repo}/pulls/${cfg.prNumber}`);
+      if (again.head.sha !== headSha) {
+        verdict = { internalBump: false, offending: '(the head moved while checking)' };
+      }
+    }
+  } catch (error) {
+    verdict = { internalBump: false, offending: `(lookup failed: ${error.message})` };
+  }
+  if (verdict.internalBump) {
+    await postStatus(statusSha, 'success', `${INTERNAL_BUMP_STATUS} only @easylife365/* and EL.* versions move up, no agent review needed`);
+    console.log('The pull request only moves internal package versions up; agent review not required.');
+    process.exit(0);
+  }
+  console.log(`Not an internal library bump (${verdict.offending}).`);
+}
 
 // Drafts are not reviewed, so requiring a review of one would block work that is not asking
 // to merge. The check reports success rather than skipping: a required check that never

