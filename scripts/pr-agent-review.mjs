@@ -64,7 +64,11 @@
 const PR_NUMBER_IN_REF = /\/pr-(\d+)-[0-9a-f]+$/;
 
 import { appendFileSync } from 'node:fs';
-import { isDependencyOnlyChange, commitsAreTrusted, COMMITS_CAP } from './lib/dependency-only.mjs';
+import { isDependencyOnlyChange, isInternalBumpOnly, commitsAreTrusted, COMMITS_CAP } from './lib/dependency-only.mjs';
+
+// The start of the status description for an internal library bump. The agent flow of
+// EasyLife365/.github-private reads it to close its review loop without a round: change both together.
+const INTERNAL_BUMP_STATUS = 'Internal library bump:';
 
 const env = process.env;
 
@@ -77,6 +81,7 @@ const cfg = {
   statusContext: (env.INPUT_STATUS_CONTEXT || 'agent-review').trim(),
   exemptAuthors: (env.INPUT_EXEMPT_AUTHORS || 'dependabot[bot],renovate[bot]')
     .split(',').map((s) => s.trim().toLowerCase()).filter(Boolean),
+  internalBumpExempt: (env.INPUT_INTERNAL_BUMP_EXEMPT || 'true').trim().toLowerCase() !== 'false',
 };
 
 if (!cfg.prNumber && cfg.mergeGroupHeadRef) {
@@ -218,6 +223,37 @@ const author = (pull.user?.login || '').toLowerCase();
 // reviewed commit is compared with below). Identical to headSha outside a merge queue -- see the
 // merge-queue comment near the top of this file.
 const statusSha = mergeGroupSha || headSha;
+
+// A pull request that only moves @easylife365/* or EL.* versions up to a plain X.Y.Z needs no agent
+// review, whoever wrote it (EasyLife365/.github-private#593): the code of that version was reviewed in
+// the library's own pull request, and isInternalBumpOnly judges every changed line, so nothing else can
+// ride along. It runs before the draft check so a draft says so too: the agent flow reads this status
+// on its draft to skip the review loop. Anything unreadable falls through to review -- fail closed.
+//
+// RESIDUAL: a version is trusted because the library's release workflow published it. A library whose
+// publish workflow also runs on workflow_dispatch can publish a higher version from an unreviewed
+// branch; the human approver checks that the version has a release in the library repository.
+if (cfg.internalBumpExempt) {
+  let verdict;
+  try {
+    const files = await apiAll(`/repos/${owner}/${repo}/pulls/${cfg.prNumber}/files`, 30);
+    verdict = isInternalBumpOnly(files);
+    if (verdict.internalBump) {
+      const again = await api(`/repos/${owner}/${repo}/pulls/${cfg.prNumber}`);
+      if (again.head.sha !== headSha) {
+        verdict = { internalBump: false, offending: '(the head moved while checking)' };
+      }
+    }
+  } catch (error) {
+    verdict = { internalBump: false, offending: `(lookup failed: ${error.message})` };
+  }
+  if (verdict.internalBump) {
+    await postStatus(statusSha, 'success', `${INTERNAL_BUMP_STATUS} only @easylife365/* and EL.* versions move up, no agent review needed`);
+    console.log('The pull request only moves internal package versions up; agent review not required.');
+    process.exit(0);
+  }
+  console.log(`Not an internal library bump (${verdict.offending}).`);
+}
 
 // Drafts are not reviewed, so requiring a review of one would block work that is not asking
 // to merge. The check reports success rather than skipping: a required check that never

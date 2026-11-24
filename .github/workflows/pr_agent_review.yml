@@ -119,6 +119,11 @@ on:
         required: false
         type: string
         default: 'dependabot[bot],renovate[bot]'
+      internal-bump-exempt:
+        description: 'Pass the check without a review when the pull request only moves @easylife365/* or EL.* package versions up to a plain X.Y.Z, line by line in package.json, yarn.lock, .csproj and .props files, whoever wrote it (EasyLife365/.github-private#593). The status description then starts with "Internal library bump:", on a draft too. Anything else is reviewed normally.'
+        required: false
+        type: boolean
+        default: true
       node-version:
         description: 'Node version used to run the check.'
         required: false
@@ -181,4 +186,5 @@ jobs:
           INPUT_MERGE_GROUP_HEAD_REF: ${{ github.event.merge_group.head_ref }}
           INPUT_STATUS_CONTEXT: ${{ inputs.status-context }}
           INPUT_EXEMPT_AUTHORS: ${{ inputs.exempt-authors }}
+          INPUT_INTERNAL_BUMP_EXEMPT: ${{ inputs.internal-bump-exempt }}
         run: node .easylife-workflows/scripts/pr-agent-review.mjs

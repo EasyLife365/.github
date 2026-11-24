@@ -147,6 +147,153 @@ export function isDependencyOnlyChange(files) {
   return { dependencyOnly: true };
 }
 
+// ---- Internal library bumps (EasyLife365/.github-private#593) ----
+//
+// A pull request that only moves the version of our own packages (@easylife365/* on GitHub Packages,
+// the EL.* NuGet suite) to a higher plain X.Y.Z, whoever wrote it. The code of that version was
+// reviewed in the library's own pull request and published by its release workflow; the consumer
+// pull request only moves the pointer. Unlike the Dependabot route this judges every CHANGED LINE,
+// not only the file names, so no provenance is needed: nothing but those version strings can change.
+
+const SEMVER = String.raw`(\d+)\.(\d+)\.(\d+)`;
+const NPM_NAME = String.raw`@easylife365\/[a-z0-9][a-z0-9._-]*`;
+const EOL = String.raw`\s*\r?$`;
+
+/** package.json: `"@easylife365/x": "[^~]X.Y.Z"[,]`. Groups: 1 indent, 2 name, 3 range prefix, 4 version, 8 comma. */
+const NPM_DEP_LINE = new RegExp(String.raw`^[+-](\s*)"(${NPM_NAME})":\s*"([\^~]?)(${SEMVER})"(,?)${EOL}`);
+/** .csproj/.props: `<PackageReference|PackageVersion Include|Update="EL.X" Version="X.Y.Z" />`. Groups: 1 indent, 2 element, 3 attribute, 4 name, 5 version. */
+const NUGET_LINE = new RegExp(
+  String.raw`^[+-](\s*)<(PackageReference|PackageVersion)\s+(Include|Update)="(EL\.[A-Za-z0-9][A-Za-z0-9._]*)"\s+Version="(${SEMVER})"\s*\/>${EOL}`,
+);
+/** yarn.lock v1 entry of an internal package: header, version, resolved on GitHub Packages, integrity. */
+const LOCK_HEADER = new RegExp(String.raw`^[+-]"(${NPM_NAME})@([\^~]?)(${SEMVER})":${EOL}`);
+const LOCK_VERSION = new RegExp(String.raw`^[+-]  version "(${SEMVER})"${EOL}`);
+const LOCK_RESOLVED = new RegExp(
+  String.raw`^[+-]  resolved "https:\/\/npm\.pkg\.github\.com\/download\/(${NPM_NAME})\/(${SEMVER})\/[0-9a-f]{40}#[0-9a-f]{40}"${EOL}`,
+);
+const LOCK_INTEGRITY = new RegExp(String.raw`^[+-]  integrity sha512-[A-Za-z0-9+/]+={0,2}${EOL}`);
+
+function isHigher(oldVersion, newVersion) {
+  const a = oldVersion.split('.').map(Number);
+  const b = newVersion.split('.').map(Number);
+  for (let i = 0; i < 3; i++) {
+    if (b[i] !== a[i]) return b[i] > a[i];
+  }
+  return false;
+}
+
+/**
+ * Splits a patch into change runs: removed lines immediately followed by added lines, as git prints a
+ * changed block. Returns null for an added-only or removed-only run, a '-' after a '+' in one run, or a
+ * patch with no change at all.
+ */
+function changeRuns(patch) {
+  const runs = [];
+  let removed = [];
+  let added = [];
+  let ok = true;
+  const flush = () => {
+    if (removed.length === 0 && added.length === 0) return;
+    if (removed.length === 0 || added.length === 0) ok = false;
+    runs.push({ removed, added });
+    removed = [];
+    added = [];
+  };
+  for (const line of patch.split('\n')) {
+    if (line.startsWith('-')) {
+      if (added.length > 0) ok = false;
+      removed.push(line);
+    } else if (line.startsWith('+')) {
+      added.push(line);
+    } else {
+      flush();
+    }
+  }
+  flush();
+  return ok && runs.length > 0 ? runs : null;
+}
+
+function pairwise(run, check) {
+  return run.removed.length === run.added.length && run.removed.every((oldLine, i) => check(oldLine, run.added[i]));
+}
+
+function npmDependencyPair(oldLine, newLine) {
+  const a = NPM_DEP_LINE.exec(oldLine);
+  const b = NPM_DEP_LINE.exec(newLine);
+  return a !== null && b !== null && a[1] === b[1] && a[2] === b[2] && a[3] === b[3] && a[8] === b[8] && isHigher(a[4], b[4]);
+}
+
+function nugetPair(oldLine, newLine) {
+  const a = NUGET_LINE.exec(oldLine);
+  const b = NUGET_LINE.exec(newLine);
+  return a !== null && b !== null && a[1] === b[1] && a[2] === b[2] && a[3] === b[3] && a[4] === b[4] && isHigher(a[5], b[5]);
+}
+
+/** One side of a lock run: [header?] version resolved integrity, all naming one internal package at one version. */
+function lockEntry(lines) {
+  let rest = lines;
+  let header = null;
+  if (rest.length === 4) {
+    header = LOCK_HEADER.exec(rest[0]);
+    if (header === null) return null;
+    rest = rest.slice(1);
+  }
+  if (rest.length !== 3) return null;
+  const version = LOCK_VERSION.exec(rest[0]);
+  const resolved = LOCK_RESOLVED.exec(rest[1]);
+  if (version === null || resolved === null || !LOCK_INTEGRITY.test(rest[2])) return null;
+  if (resolved[2] !== version[1]) return null;
+  if (header !== null && header[1] !== resolved[1]) return null;
+  return { name: resolved[1], version: version[1], prefix: header?.[2], spec: header?.[3] };
+}
+
+function lockRun(run) {
+  if (run.removed.length !== run.added.length) return false;
+  const a = lockEntry(run.removed);
+  const b = lockEntry(run.added);
+  if (a === null || b === null || a.name !== b.name || !isHigher(a.version, b.version)) return false;
+  if ((a.spec === undefined) !== (b.spec === undefined)) return false;
+  return a.spec === undefined || (a.prefix === b.prefix && isHigher(a.spec, b.spec));
+}
+
+function internalBumpFileOk(file) {
+  const name = baseName(file.filename);
+  const runs = changeRuns(file.patch);
+  if (runs === null) return false;
+  if (name === 'package.json') return runs.every((run) => pairwise(run, npmDependencyPair));
+  if (name === 'yarn.lock') return runs.every(lockRun);
+  if (name.endsWith('.csproj') || name.endsWith('.props')) return runs.every((run) => pairwise(run, nugetPair));
+  return false;
+}
+
+/**
+ * @param {Array<{filename: string, status?: string, patch?: string, previous_filename?: string}>} files
+ *   the pull request's files as returned by GET /pulls/{n}/files
+ * @returns {{internalBump: boolean, offending?: string}} `offending` is the first file that rules it
+ *   out. Anything unreadable (no patch, a truncated listing) is never an internal bump.
+ */
+export function isInternalBumpOnly(files) {
+  if (!Array.isArray(files) || files.length === 0) {
+    return { internalBump: false, offending: '(no file listing)' };
+  }
+  if (files.length >= FILES_API_CAP) {
+    return { internalBump: false, offending: `(listing may be truncated at ${FILES_API_CAP} files)` };
+  }
+  for (const file of files) {
+    const path = file?.filename;
+    if (
+      typeof path !== 'string' ||
+      file.status !== 'modified' ||
+      (file.previous_filename && file.previous_filename !== path) ||
+      typeof file.patch !== 'string' ||
+      !internalBumpFileOk(file)
+    ) {
+      return { internalBump: false, offending: typeof path === 'string' ? path : '(a file without a name)' };
+    }
+  }
+  return { internalBump: true };
+}
+
 /**
  * Provenance: the commit list must satisfy all of
  *  - the first commit is a route-(a) commit, and every commit is route (a) or route (b);
