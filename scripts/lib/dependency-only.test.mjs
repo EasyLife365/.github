@@ -451,6 +451,30 @@ test('nuget.config: no mapping, EL.* on nuget.org, another feed URL or an EL. pa
   assert.equal(nugetConfigPinsInternal([nugetConfig({ extra: '\n      <package pattern="el.core.api" />' })]), false);
 });
 
+test('nuget.config: a shape the patterns would skip fails (quotes, attribute order or extra attribute, a second block)', () => {
+  assert.equal(nugetConfigPinsInternal([nugetConfig({ extra: "\n    </packageSource>\n    <packageSource key='NuGet official package source'>\n      <package pattern=\"EL.Core\" />" })]), false);
+  assert.equal(nugetConfigPinsInternal([nugetConfig({ extra: '\n    </packageSource>\n    <packageSource key="NuGet official package source" x="1">\n      <package pattern="EL.Core" />' })]), false);
+  assert.equal(nugetConfigPinsInternal([nugetConfig({ extra: '\n      <package pattern="EL.Core" version="1" />' })]), false);
+  assert.equal(nugetConfigPinsInternal([nugetConfig().replace('<clear />', '<add value="https://api.nuget.org/v3/index.json" key="Github" />')]), false);
+  assert.equal(nugetConfigPinsInternal([nugetConfig().replace('</configuration>', '<packageSources>\n  <add key="x" value="y" />\n</packageSources>\n</configuration>')]), false);
+});
+
+test('internal bump: @easylife365/pricing-calculator is not an internal package (its own job publishes it)', () => {
+  assert.equal(internal([pkg('1.0.0', '1.0.1', { name: '@easylife365/pricing-calculator' })]), false);
+  assert.equal(internal([lock('1.0.0', '1.0.1', { name: '@easylife365/pricing-calculator' })]), false);
+  assert.equal(internal([pkg('1.0.0', '1.0.1', { name: '@easylife365/pricing-calculator-x' })]), true, 'only that exact name');
+});
+
+test('internal bump: on a hotfix/ base only a higher patch of the same MAJOR.MINOR passes', () => {
+  const patchOnly = (files) => isInternalBumpOnly(files.map(counted), { patchOnly: true }).internalBump;
+  assert.equal(patchOnly([pkg('0.15.3', '0.15.4'), lock('0.15.3', '0.15.4')]), true);
+  assert.equal(patchOnly([pkg('0.15.3', '0.16.0')]), false);
+  assert.equal(patchOnly([lock('0.15.3', '0.16.0')]), false);
+  assert.equal(patchOnly([csproj('5.15.1', '5.15.2')]), true);
+  assert.equal(patchOnly([csproj('5.15.1', '6.15.2')]), false);
+  assert.equal(patchOnly([csproj('5.15.1', '5.15.1')]), false);
+});
+
 test('nuget.config: a clear in the mapping, a source defined twice, no file or not text fails', () => {
   assert.equal(nugetConfigPinsInternal([nugetConfig().replace('<packageSourceMapping>\n', '<packageSourceMapping>\n    <clear />\n')]), false);
   assert.equal(nugetConfigPinsInternal([nugetConfig().replace('<clear />', '<add key="Github" value="https://api.nuget.org/v3/index.json" />')]), false);

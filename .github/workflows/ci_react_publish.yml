@@ -41,6 +41,41 @@ jobs:
           fetch-depth: 0
           fetch-tags: true
 
+      - uses: EasyLife365/get-version-action@v1.2.2
+        if: ${{ inputs.publish }}
+        id: version
+
+      # Where a release version comes from, decided here, before any install, test or build of the commit
+      # can run code that moves a ref: the publish step only reads this answer (require_reviewed_commit).
+      # A release version becomes `latest` or `maint-X.Y`, and consumers take it up without an agent review
+      # (pr-agent-review.mjs, internal library bumps, EasyLife365/.github-private#593), so it needs a
+      # release of its tag whose commit is on main or a hotfix/ branch. RESIDUAL: until the hotfix and tag
+      # rulesets are active (EasyLife365/.github-private#325), anyone with Write on the library can create a
+      # hotfix/ branch with unreviewed code and release it.
+      - name: Check where the version comes from
+        if: ${{ inputs.publish }}
+        id: origin
+        shell: bash
+        env:
+          VERSION: ${{ steps.version.outputs.versionWithoutV }}
+          EL_EVENT_NAME: ${{ github.event_name }}
+          EL_REF_TYPE: ${{ github.ref_type }}
+          EL_REF_NAME: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          reviewed=false
+          if [[ "$EL_EVENT_NAME" == release && "$EL_REF_TYPE" == tag && "$EL_REF_NAME" == "v$VERSION" ]]; then
+            head="$(git rev-parse HEAD)"
+            if git merge-base --is-ancestor "$head" origin/main 2>/dev/null; then reviewed=true; fi
+            if [ "$reviewed" = false ]; then
+              while IFS= read -r branch; do
+                if git merge-base --is-ancestor "$head" "$branch" 2>/dev/null; then reviewed=true; break; fi
+              done < <(git for-each-ref --format='%(refname)' 'refs/remotes/origin/hotfix/')
+            fi
+          fi
+          echo "reviewed=$reviewed" >> "$GITHUB_OUTPUT"
+          echo "Release of the tag on main or a hotfix/ branch: $reviewed"
+
       - uses: actions/setup-node@v7
         env:
           GITHUB_PACKAGE_TOKEN: ${{ secrets.GITHUB_PACKAGE_TOKEN }}
@@ -98,10 +133,6 @@ jobs:
         run: yarn test
         env:
           GITHUB_PACKAGE_TOKEN: ${{ secrets.GITHUB_PACKAGE_TOKEN }}
-
-      - uses: EasyLife365/get-version-action@v1.2.2
-        if: ${{ inputs.publish }}
-        id: version
 
       - name: Set version (npm)
         if: ${{ inputs.publish && !inputs.yarn }}
@@ -179,8 +210,9 @@ jobs:
       #     release of the tag vX.Y.N whose commit is on main or a hotfix/ branch
       #   - greater than latest, pre-release (-)  -> `--tag next`, for a release of the tag (any branch)
       #   - equal or lower than latest            -> `--tag maint-<MAJOR>.<MINOR>`, but ONLY for a run
-      #     started by a GitHub release of the tag vX.Y.N being published, whose commit is on main or a
-      #     hotfix/ branch (a workflow_dispatch of any branch must not publish feature code under a maint tag)
+      #     started by a GitHub release of the tag vX.Y.N being published (a workflow_dispatch of any
+      #     branch must not publish feature code under a maint tag), and for a release version only when
+      #     its commit is on main or a hotfix/ branch
       #   - no latest (404, package not visible, or only non-latest tags) -> only X.Y.0 may publish;
       #     a hotfix has PATCH > 0, so it is refused instead of becoming latest by accident
       #
@@ -210,19 +242,14 @@ jobs:
             fi
           }
 
-          # A release version becomes `latest`, and consumers take it up without an agent review
-          # (pr-agent-review.mjs, internal library bumps, EasyLife365/.github-private#593). So it is published
-          # only from a release of its tag whose commit is on main or a hotfix/ branch: code a reviewed pull
-          # request holds. A workflow_dispatch, or a release made on another branch, publishes no release version.
+          # A release version (latest or maint) is published only from a release of its tag whose commit is
+          # on main or a hotfix/ branch, as the "Check where the version comes from" step decided before any
+          # install or build ran. A workflow_dispatch, or a release made on another branch, publishes no
+          # release version.
           require_reviewed_commit() {
             require_release_of_tag "$1"
-            local head
-            head="$(git rev-parse HEAD)"
-            git merge-base --is-ancestor "$head" origin/main 2>/dev/null && return 0
-            while IFS= read -r branch; do
-              git merge-base --is-ancestor "$head" "$branch" 2>/dev/null && return 0
-            done < <(git for-each-ref --format='%(refname)' 'refs/remotes/origin/hotfix/')
-            fail "$1 The commit of v$PKG_VERSION is on neither main nor a hotfix/ branch. Not publishing."
+            [ "$EL_REVIEWED" = true ] && return 0
+            fail "$1 The commit of v$PKG_VERSION is on neither main nor a hotfix/ branch. For a hotfix release after its branch was deleted, recreate hotfix/v$PKG_VERSION at the tag commit and re-run. Not publishing."
           }
 
           # Build scripts and prepack/prepublishOnly hooks ran since the version was set: publish only
@@ -319,7 +346,11 @@ jobs:
               fi
               ;;
             not-greater)
-              require_reviewed_commit "$PKG_VERSION is not greater than the current latest $latest."
+              if [[ "$PKG_VERSION" == *-* ]]; then
+                require_release_of_tag "$PKG_VERSION is not greater than the current latest $latest."
+              else
+                require_reviewed_commit "$PKG_VERSION is not greater than the current latest $latest."
+              fi
               tag="maint-$major.$minor"
               [[ "$tag" =~ ^maint-[0-9]+\.[0-9]+$ ]] || fail "Refusing to publish: computed dist-tag '$tag' is malformed."
               publish --tag "$tag"
@@ -340,5 +371,6 @@ jobs:
           EL_EVENT_NAME: ${{ github.event_name }}
           EL_REF_TYPE: ${{ github.ref_type }}
           EL_REF_NAME: ${{ github.ref_name }}
+          EL_REVIEWED: ${{ steps.origin.outputs.reviewed }}
           GITHUB_PACKAGE_TOKEN: ${{ secrets.GITHUB_PACKAGE_TOKEN }}
           NODE_AUTH_TOKEN: ${{ secrets.GITHUB_PACKAGE_TOKEN }}

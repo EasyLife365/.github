@@ -38,7 +38,9 @@ jobs:
 
       # A release version is taken up by consumers without an agent review (pr-agent-review.mjs, internal
       # library bumps, EasyLife365/.github-private#593), so it is published only from a release of its tag
-      # whose commit is on main or a hotfix/ branch: code a reviewed pull request holds. And without
+      # whose commit is on main or a hotfix/ branch. RESIDUAL: until the hotfix and tag rulesets are active
+      # (EasyLife365/.github-private#325), anyone with Write on the library can create a hotfix/ branch with
+      # unreviewed code and release it. It runs before restore, so no code of the commit has run yet. And without
       # --skip-duplicate, so a version pushed earlier from elsewhere fails the release instead of being kept
       # silently (a re-run after a partial push fails too: the pushed packages are deleted by hand first).
       # A pre-release (X.Y.Z-...) is published for a review lane from any branch; pr_compliance.yml keeps it off main.
@@ -69,7 +71,7 @@ jobs:
               if git merge-base --is-ancestor "$head" "$branch" 2>/dev/null; then reviewed=1; break; fi
             done < <(git for-each-ref --format='%(refname)' 'refs/remotes/origin/hotfix/')
           fi
-          [ -n "$reviewed" ] || fail "The commit of v$VERSION is on neither main nor a hotfix/ branch. Not publishing."
+          [ -n "$reviewed" ] || fail "The commit of v$VERSION is on neither main nor a hotfix/ branch. For a hotfix release after its branch was deleted, recreate hotfix/v$VERSION at the tag commit and re-run. Not publishing."
           echo "skip-duplicate=" >> "$GITHUB_OUTPUT"
 
       # The dotnet download CDN fails transiently (HTTP 409); retry once before failing the job.

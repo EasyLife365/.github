@@ -179,11 +179,17 @@ export function isDependencyOnlyChange(files) {
 // ---- Internal library bumps (EasyLife365/.github-private#593) ----
 //
 // A pull request that only moves the version of our own packages (@easylife365/* on GitHub Packages,
-// the EL.* NuGet suite) to a higher plain X.Y.Z, whoever wrote it. The code of that version was
-// reviewed in the library's own pull request, and the shared publish workflows publish a release
-// version only from a release whose tag commit is on main or a hotfix/ branch (ci_react_publish.yml,
+// the EL.* NuGet suite) to a higher plain X.Y.Z, whoever wrote it; on a hotfix/ base, only a higher
+// patch of the same MAJOR.MINOR. The shared publish workflows publish a release version only from a
+// release whose tag commit is on main or a hotfix/ branch (ci_react_publish.yml,
 // release_nuget_packages.yml); the consumer pull request only moves the pointer. Unlike the Dependabot
 // route this judges every CHANGED LINE, not only the file names, so no provenance is needed.
+//
+// RESIDUAL: until the hotfix and tag rulesets are active (EasyLife365/.github-private#325), anyone with
+// Write on a library repository can create a hotfix/ branch with unreviewed code and release it, and a
+// person with package write access can push a version by hand; versions published before the gate are
+// trusted as they are. @easylife365/pricing-calculator is published by its own job, outside the gate,
+// so it is not an internal package here.
 //
 // What pins the bytes to the version: in yarn.lock, the resolved URL carries the tarball's SHA-1 twice
 // (path and fragment, required equal here) and GitHub Packages answers 409 for a hash that is not the
@@ -192,7 +198,7 @@ export function isDependencyOnlyChange(files) {
 // of the base branch must take EL.* from the EasyLife365 feed only (nugetConfigPinsInternal).
 
 const SEMVER = String.raw`(\d+)\.(\d+)\.(\d+)`;
-const NPM_NAME = String.raw`@easylife365\/[a-z0-9][a-z0-9._-]*`;
+const NPM_NAME = String.raw`@easylife365\/(?!pricing-calculator(?![a-z0-9._-]))[a-z0-9][a-z0-9._-]*`;
 const EOL = String.raw`[ \t]*\r?$`;
 
 /** package.json: `"@easylife365/x": "[^~]X.Y.Z"[,]`. Groups: 1 indent, 2 name, 3 range prefix, 4 version, 8 comma. */
@@ -210,6 +216,13 @@ const LOCK_RESOLVED = new RegExp(
 );
 const LOCK_INTEGRITY = new RegExp(String.raw`^[+-]  integrity sha512-[A-Za-z0-9+/]+={0,2}${EOL}`);
 
+/** A higher patch of the same MAJOR.MINOR (a hotfix/ base). */
+function isHigherPatch(oldVersion, newVersion) {
+  const a = oldVersion.split('.');
+  const b = newVersion.split('.');
+  return a[0] === b[0] && a[1] === b[1] && Number(b[2]) > Number(a[2]);
+}
+
 function isHigher(oldVersion, newVersion) {
   const a = oldVersion.split('.').map(Number);
   const b = newVersion.split('.').map(Number);
@@ -219,16 +232,16 @@ function isHigher(oldVersion, newVersion) {
   return false;
 }
 
-function npmDependencyPair(oldLine, newLine) {
+function npmDependencyPair(oldLine, newLine, up) {
   const a = NPM_DEP_LINE.exec(oldLine);
   const b = NPM_DEP_LINE.exec(newLine);
-  return a !== null && b !== null && a[1] === b[1] && a[2] === b[2] && a[3] === b[3] && a[8] === b[8] && isHigher(a[4], b[4]);
+  return a !== null && b !== null && a[1] === b[1] && a[2] === b[2] && a[3] === b[3] && a[8] === b[8] && up(a[4], b[4]);
 }
 
-function nugetPair(oldLine, newLine) {
+function nugetPair(oldLine, newLine, up) {
   const a = NUGET_LINE.exec(oldLine);
   const b = NUGET_LINE.exec(newLine);
-  return a !== null && b !== null && a[1] === b[1] && a[2] === b[2] && a[3] === b[3] && a[4] === b[4] && isHigher(a[5], b[5]);
+  return a !== null && b !== null && a[1] === b[1] && a[2] === b[2] && a[3] === b[3] && a[4] === b[4] && up(a[5], b[5]);
 }
 
 /** One side of a lock run: [header?] version resolved integrity, all naming one internal package at one version. */
@@ -249,18 +262,18 @@ function lockEntry(lines) {
   return { name: resolved[1], version: version[1], prefix: header?.[2], spec: header?.[3] };
 }
 
-function lockRun(run) {
+function lockRun(run, up) {
   if (run.removed.length !== run.added.length) return false;
   const a = lockEntry(run.removed);
   const b = lockEntry(run.added);
-  if (a === null || b === null || a.name !== b.name || !isHigher(a.version, b.version)) return false;
+  if (a === null || b === null || a.name !== b.name || !up(a.version, b.version)) return false;
   if ((a.spec === undefined) !== (b.spec === undefined)) return false;
-  return a.spec === undefined || (a.prefix === b.prefix && isHigher(a.spec, b.spec));
+  return a.spec === undefined || (a.prefix === b.prefix && up(a.spec, b.spec));
 }
 
 const isNugetFile = (name) => name.endsWith('.csproj') || name.endsWith('.props');
 
-function internalBumpFileOk(file) {
+function internalBumpFileOk(file, up) {
   const name = baseName(file.filename);
   const runs = changeRuns(file.patch);
   if (runs === null) return false;
@@ -268,21 +281,23 @@ function internalBumpFileOk(file) {
   const additions = runs.reduce((n, run) => n + run.added.length, 0);
   const deletions = runs.reduce((n, run) => n + run.removed.length, 0);
   if (additions !== file.additions || deletions !== file.deletions) return false;
-  if (name === 'package.json') return runs.every((run) => pairwise(run, npmDependencyPair));
-  if (name === 'yarn.lock') return runs.every(lockRun);
-  if (isNugetFile(name)) return runs.every((run) => pairwise(run, nugetPair));
+  if (name === 'package.json') return runs.every((run) => pairwise(run, (o, n) => npmDependencyPair(o, n, up)));
+  if (name === 'yarn.lock') return runs.every((run) => lockRun(run, up));
+  if (isNugetFile(name)) return runs.every((run) => pairwise(run, (o, n) => nugetPair(o, n, up)));
   return false;
 }
 
 /**
  * @param {Array<{filename: string, status?: string, patch?: string, previous_filename?: string,
  *   additions?: number, deletions?: number}>} files the pull request's files as returned by GET /pulls/{n}/files
+ * @param {{patchOnly?: boolean}} [options] patchOnly: only a higher patch of the same MAJOR.MINOR (a hotfix/ base)
  * @returns {{internalBump: boolean, nuget?: boolean, offending?: string}} `nuget` says a .csproj or .props
  *   file moved, so the caller must also check the nuget.config files (nugetConfigPinsInternal).
  *   `offending` is the first file that rules it out. Anything unreadable (no patch, a patch that does not
  *   add up to the file's counts, a truncated listing) is never an internal bump.
  */
-export function isInternalBumpOnly(files) {
+export function isInternalBumpOnly(files, { patchOnly = false } = {}) {
+  const up = patchOnly ? isHigherPatch : isHigher;
   const unreadable = unreadableListing(files);
   if (unreadable !== null) return { internalBump: false, offending: unreadable };
   for (const file of files) {
@@ -292,7 +307,7 @@ export function isInternalBumpOnly(files) {
       file.status !== 'modified' ||
       (file.previous_filename && file.previous_filename !== path) ||
       typeof file.patch !== 'string' ||
-      !internalBumpFileOk(file)
+      !internalBumpFileOk(file, up)
     ) {
       return { internalBump: false, offending: typeof path === 'string' ? path : '(a file without a name)' };
     }
@@ -303,7 +318,8 @@ export function isInternalBumpOnly(files) {
 export const EASYLIFE_NUGET_FEED = 'https://nuget.pkg.github.com/EasyLife365/index.json';
 
 /**
- * True when every nuget.config text takes EL.* package ids from the EasyLife365 feed only: it has a
+ * True when every nuget.config text (the caller also requires one at the repository root) takes EL.* package
+ * ids from the EasyLife365 feed only, in the plain shape this reads: it has a
  * packageSourceMapping with `EL.*` under a source whose value is that feed, and every pattern that
  * starts with `EL.` sits under such a source. Without it, an EL.* id can come from nuget.org, where
  * anybody can publish a higher version. Anything unusual (no text, a clear inside the mapping, a
@@ -315,19 +331,29 @@ export function nugetConfigPinsInternal(texts) {
   return texts.every((raw) => {
     if (typeof raw !== 'string') return false;
     const text = raw.replace(/<!--[\s\S]*?-->/g, '');
+    // Only the plain shape is read. Anything the patterns would skip (single quotes, another attribute
+    // order or an extra attribute, a second block) is not understood, so it is not trusted.
+    const count = (s, re) => (s.match(re) || []).length;
+    if (/='/.test(text)) return false;
+    const sourcesBlocks = [...text.matchAll(/<packageSources>([\s\S]*?)<\/packageSources>/g)];
+    if (sourcesBlocks.length !== 1 || count(text, /<packageSources\b/g) !== 1) return false;
+    const adds = [...sourcesBlocks[0][1].matchAll(/<add key="([^"]*)" value="([^"]*)" \/>/g)];
+    if (adds.length !== count(sourcesBlocks[0][1], /<add\b/g)) return false;
     const sources = new Map();
-    const sourcesBlock = /<packageSources>([\s\S]*?)<\/packageSources>/.exec(text);
-    if (sourcesBlock === null) return false;
-    for (const add of sourcesBlock[1].matchAll(/<add\s+key="([^"]*)"\s+value="([^"]*)"[^>]*\/>/g)) {
+    for (const add of adds) {
       if (sources.has(add[1])) return false;
       sources.set(add[1], add[2]);
     }
     const mappings = [...text.matchAll(/<packageSourceMapping>([\s\S]*?)<\/packageSourceMapping>/g)];
-    if (mappings.length !== 1 || /<clear\b/.test(mappings[0][1])) return false;
+    if (mappings.length !== 1 || count(text, /<packageSourceMapping\b/g) !== 1 || /<clear\b/.test(mappings[0][1])) return false;
+    const blocks = [...mappings[0][1].matchAll(/<packageSource key="([^"]*)">([\s\S]*?)<\/packageSource>/g)];
+    if (blocks.length !== count(mappings[0][1], /<packageSource\b/g)) return false;
     let pinned = false;
-    for (const source of mappings[0][1].matchAll(/<packageSource\s+key="([^"]*)"\s*>([\s\S]*?)<\/packageSource>/g)) {
+    for (const source of blocks) {
       const isFeed = sources.get(source[1]) === EASYLIFE_NUGET_FEED;
-      for (const pattern of source[2].matchAll(/<package\s+pattern="([^"]*)"\s*\/>/g)) {
+      const patterns = [...source[2].matchAll(/<package pattern="([^"]*)" \/>/g)];
+      if (patterns.length !== count(source[2], /<package\b/g)) return false;
+      for (const pattern of patterns) {
         if (/^el\./i.test(pattern[1]) && !isFeed) return false;
         if (pattern[1] === 'EL.*' && isFeed) pinned = true;
       }

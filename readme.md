@@ -231,13 +231,17 @@ gate.
 or Renovate update of dependency files only ("Exempt author"), and an **internal library bump**
 ("Internal library bump: …", also on a draft): every changed line moves an `@easylife365/*` or
 `EL.*` version up to a plain `X.Y.Z` (in `package.json`, that package's own `yarn.lock` entry
-on GitHub Packages, `.csproj` and `.props`), and every `nuget.config` of the base branch takes `EL.*`
-from the EasyLife365 feed only. Anything else is reviewed. It is a recorded exception
-(EasyLife365/.github-private#593): the code of a release version was reviewed in the library, and
-`ci_react_publish.yml` and `release_nuget_packages.yml` publish a release version only from a release
-whose tag commit is on `main` or a `hotfix/` branch. What remains: a person with package write access
-can push a version by hand. The approver reads the Files tab (version lines only) and the library's
-release of each version. A caller switches it off with `internal-bump-exempt: false`.
+on GitHub Packages, `.csproj` and `.props`; on a `hotfix/` base only a higher patch), and every
+`nuget.config` of the base branch, one at the root included, takes `EL.*` from the EasyLife365 feed
+only. `@easylife365/pricing-calculator` is not in it (its own job publishes it). Anything else is
+reviewed. It is a recorded exception (EasyLife365/.github-private#593): `ci_react_publish.yml` and
+`release_nuget_packages.yml` publish a release version only from a release whose tag commit is on
+`main` or a `hotfix/` branch, decided before any install or build runs. What remains: until the hotfix
+and tag rulesets are active (EasyLife365/.github-private#325), anyone with Write on a library can create
+a `hotfix/` branch with unreviewed code and release it; a person with package write access can push a
+version by hand; versions published before the gate are trusted as they are. The approver reads the
+Files tab (version lines only) and checks that each release's tag commit came through a merged pull
+request. A caller switches it off with `internal-bump-exempt: false`.
 
 Both compliance and the agent check are wired per repository, and every compliance check is
 individually switchable, because the estate genuinely differs — Collaboration does not use the

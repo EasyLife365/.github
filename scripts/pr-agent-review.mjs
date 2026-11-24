@@ -231,30 +231,37 @@ const statusSha = mergeGroupSha || headSha;
 
 // A pull request that only moves @easylife365/* or EL.* versions up to a plain X.Y.Z needs no agent
 // review, whoever wrote it (EasyLife365/.github-private#593, a recorded exception to "an agent review on
-// every pull request"): the code of that version was reviewed in the library's own pull request, and
-// isInternalBumpOnly judges every changed line, so nothing else can ride along. It runs before the draft
-// check so a draft says so too: the agent flow reads this status on its draft to skip the review loop.
-// Anything unreadable falls through to review -- fail closed.
+// every pull request"): the shared publish workflows (ci_react_publish.yml, release_nuget_packages.yml)
+// publish a release version only from a release whose tag commit is on main or a hotfix/ branch, and
+// isInternalBumpOnly judges every changed line, so nothing else can ride along. On a hotfix/ base only a
+// higher patch of the same MAJOR.MINOR passes. It runs before the draft check so a draft says so too: the
+// agent flow reads this status on its draft to skip the review loop. Anything unreadable falls through to
+// review -- fail closed.
 //
-// RESIDUAL: a version is trusted because the shared publish workflows published it, and they publish a
-// release version only from a release whose tag commit is on main or a hotfix/ branch
-// (ci_react_publish.yml, release_nuget_packages.yml). A person with package write access could still
-// push a version by hand, or a library could publish without those workflows; the approver sees the
-// version in the Files tab and the library's release of it.
+// RESIDUAL: until the hotfix and tag rulesets are active (EasyLife365/.github-private#325), anyone with
+// Write on a library repository can create a hotfix/ branch with unreviewed code and release it; a person
+// with package write access can push a version by hand; versions published before the gate are trusted
+// as they are. The approver reads the Files tab and checks that each release's tag commit came through a
+// merged pull request.
 if (cfg.internalBumpExempt) {
   let verdict;
   try {
     const files = await apiAll(`/repos/${owner}/${repo}/pulls/${cfg.prNumber}/files`, 30);
-    verdict = isInternalBumpOnly(files);
+    verdict = isInternalBumpOnly(files, { patchOnly: String(pull.base.ref || '').startsWith('hotfix/') });
     if (verdict.internalBump && files.length !== pull.changed_files) {
       verdict = { internalBump: false, offending: `(the listing has ${files.length} files, the pull request ${pull.changed_files})` };
     }
     if (verdict.internalBump && verdict.nuget) {
-      // An EL.* line carries no source: every nuget.config of the base branch must take EL.* from our feed only.
-      const tree = await api(`/repos/${owner}/${repo}/git/trees/${pull.base.sha}?recursive=1`);
+      // An EL.* line carries no source: the base branch as it is now (what the merge will hold; the pull
+      // request cannot change a nuget.config) needs one at the root, and every one must take EL.* from our
+      // feed only. A project outside every config folder would fall back to the user-level config.
+      const baseRef = String(pull.base.ref).split('/').map(encodeURIComponent).join('/');
+      const baseTip = (await api(`/repos/${owner}/${repo}/git/ref/heads/${baseRef}`)).object.sha;
+      const tree = await api(`/repos/${owner}/${repo}/git/trees/${baseTip}?recursive=1`);
       const configs = (tree.tree || []).filter((entry) => entry.type === 'blob' && /(^|\/)nuget\.config$/i.test(entry.path));
       const texts = [];
-      for (const entry of tree.truncated ? [] : configs) {
+      const hasRoot = configs.some((entry) => /^nuget\.config$/i.test(entry.path));
+      for (const entry of tree.truncated || !hasRoot ? [] : configs) {
         const blob = await api(`/repos/${owner}/${repo}/git/blobs/${entry.sha}`);
         texts.push(Buffer.from(blob.content || '', blob.encoding === 'base64' ? 'base64' : 'utf8').toString('utf8'));
       }
